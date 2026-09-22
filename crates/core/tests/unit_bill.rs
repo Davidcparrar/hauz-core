@@ -1,7 +1,7 @@
 //! [unit] tests for the `bill` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
-use hauz_core::bill::{Currency, Error, Money};
+use hauz_core::bill::{BillId, Currency, Error, Money, Vendor};
 
 #[test]
 fn ac1_accepts_three_ascii_uppercase_letters() -> Result<(), Error> {
@@ -56,4 +56,34 @@ fn ac3_checked_add_and_sub_carry_the_shared_currency() -> Result<(), Error> {
     assert_eq!(a.checked_add(&b)?, Money::new(400, usd.clone()));
     assert_eq!(a.checked_sub(&b)?, Money::new(200, usd));
     Ok(())
+}
+
+#[test]
+fn ac4_trims_surrounding_whitespace() -> Result<(), Error> {
+    let vendor = Vendor::new("  Acme Power  ")?;
+    assert_eq!(vendor.name(), "Acme Power");
+    Ok(())
+}
+
+#[test]
+fn ac4_rejects_a_name_empty_after_trimming() {
+    assert_eq!(Vendor::new("   "), Err(Error::EmptyVendor));
+    assert_eq!(Vendor::new(""), Err(Error::EmptyVendor));
+}
+
+#[test]
+fn ac5_accepts_one_to_128_ascii_graphic_bytes() -> Result<(), Error> {
+    let id = BillId::new("bill-42")?;
+    assert_eq!(id.as_str(), "bill-42");
+    let max = "a".repeat(128);
+    assert_eq!(BillId::new(&max)?.as_str(), max);
+    Ok(())
+}
+
+#[test]
+fn ac5_rejects_empty_whitespace_non_ascii_or_over_128_bytes() {
+    let too_long = "a".repeat(129);
+    for raw in ["", "has space", "café", too_long.as_str()] {
+        assert_eq!(BillId::new(raw), Err(Error::InvalidBillId), "input: {raw:?}");
+    }
 }

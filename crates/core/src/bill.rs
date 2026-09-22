@@ -18,6 +18,12 @@ pub enum Error {
     /// A `Money` arithmetic operation overflowed `i64`.
     #[error("amount overflowed")]
     Overflow,
+    /// A vendor name was empty after trimming.
+    #[error("vendor name must not be empty")]
+    EmptyVendor,
+    /// A bill id was empty, contained whitespace or non-ASCII bytes, or exceeded 128 bytes.
+    #[error("bill id must be 1-128 ASCII graphic bytes with no whitespace")]
+    InvalidBillId,
 }
 
 /// A validated ISO-4217-shaped currency code: exactly 3 ASCII uppercase letters.
@@ -109,5 +115,74 @@ impl Money {
             .checked_sub(other.minor_units)
             .map(|minor_units| Money::new(minor_units, self.currency.clone()))
             .ok_or(Error::Overflow)
+    }
+}
+
+/// A validated, trimmed, non-empty vendor name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Vendor(String);
+
+impl Vendor {
+    /// Parse, don't validate: trims surrounding whitespace and rejects an empty result.
+    ///
+    /// # Errors
+    /// Returns [`Error::EmptyVendor`] when the trimmed name is empty.
+    pub fn new(raw: &str) -> Result<Self, Error> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(Error::EmptyVendor);
+        }
+        Ok(Self(trimmed.to_owned()))
+    }
+
+    /// The validated, trimmed vendor name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for Vendor {
+    type Error = Error;
+
+    fn try_from(raw: String) -> Result<Self, Error> {
+        Self::new(&raw)
+    }
+}
+
+/// A validated bill identifier: 1-128 bytes of ASCII graphic characters, no whitespace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String")]
+pub struct BillId(String);
+
+impl BillId {
+    /// Parse, don't validate.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidBillId`] when `raw` is empty, contains whitespace or
+    /// non-ASCII bytes, or exceeds 128 bytes.
+    pub fn new(raw: &str) -> Result<Self, Error> {
+        let valid =
+            !raw.is_empty() && raw.len() <= 128 && raw.chars().all(|c| c.is_ascii_graphic());
+        if valid {
+            Ok(Self(raw.to_owned()))
+        } else {
+            Err(Error::InvalidBillId)
+        }
+    }
+
+    /// The validated id.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BillId {
+    type Error = Error;
+
+    fn try_from(raw: String) -> Result<Self, Error> {
+        Self::new(&raw)
     }
 }
