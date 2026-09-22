@@ -3,12 +3,21 @@
      agent loads. Decisions go to docs/decisions.md, one line each. -->
 
 ## Purpose
-(3 bullets max: what this system must do well)
+- Turn a bill that arrived by email (body and/or attachments) into a structured `Bill`
+  record: who charged what, how much, in which currency, for which period, due when.
+- Persist every record durably and idempotently (the same email twice ⇒ one bill) so a
+  later analysis service can query cost over time.
+- Stay honest about uncertainty: what the extractor cannot read is stored as
+  `needs_review`, never guessed and never dropped.
+
+Out of scope here: fetching mail (a webhook, Gmail push, or SES hands us the raw
+message), analytics, frontend, mobile.
 
 ## Crate map
 ```
 ┌──────────────┐   ┌──────────────┐
-│ server (bin) │   │ app (gpui)   │   thin shells: I/O in, core calls out
+│ server (bin) │   │ cli (bin)    │   thin shells: raw email in, core calls out
+│ axum         │   │ hauz ingest  │
 └──────┬───────┘   └──────┬───────┘
        └────────┬─────────┘
                 ▼
@@ -19,14 +28,37 @@
 ```
 
 ## Modules in `core`
-<!-- One line per module: what it owns + the pub items that are its interface.
-     A module is earned when its interface is meaningfully smaller than its implementation
-     AND it is testable through that interface alone. Otherwise it is a folder. -->
-- `<module>` — owns …; interface: `Type`, `fn …`
+- `bill` — owns the domain vocabulary; interface: `Bill`, `BillId`, `Money` (minor units +
+  ISO currency), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`. Parse, don't validate:
+  constructors are fallible.
+- `email` — owns MIME decoding; interface: `Envelope::parse(&[u8])`, yielding subject,
+  sender, date, text/HTML body and `Vec<Document>` (mime type, filename, bytes).
+- `extract` — owns "document ⇒ candidate fields"; interface: `trait Extractor`,
+  `Extraction` (partial fields + confidence + source span), `merge(Vec<Extraction>)`.
+  First impl is heuristic text/HTML; PDF text and an LLM-backed impl slot in behind the
+  same trait.
+- `store` — owns persistence; interface: `trait BillStore` (`insert`, `get`,
+  `find_by_hash`, `list`), `SqliteStore` (sqlx, migrations embedded). The store is a
+  system edge: tests of other modules use an in-memory fake, `store` tests use a tmp-file
+  SQLite.
+- `ingest` — owns the pipeline; interface: `fn ingest(raw: &[u8], ex: &dyn Extractor,
+  st: &dyn BillStore) -> Result<Outcome>`. Hashes the raw message for idempotency,
+  parses, extracts, decides `Status`, persists.
 
 ## Entry points
-- server: `pub fn router(state: AppState) -> axum::Router` (lib) + `main.rs` binds and serves
-- app: (none yet)
+- server: `pub fn router(state: AppState) -> axum::Router` (lib) + `main.rs` binds and
+  serves. `POST /v1/ingest/email` takes the raw RFC 5322 message body; `GET /v1/bills/{id}`.
+- cli: `hauz ingest <file.eml>` — same pipeline, local file, for dev and replay.
+
+## Storage
+SQLite through sqlx (`sqlite` feature), one file, WAL mode. Durability and "SQLite in S3"
+come from a Litestream sidecar replicating the WAL to a bucket and restoring on boot;
+the application code never talks to S3. Turso stays possible later behind `BillStore`
+(sqlx has no libSQL driver, so it would be a second store impl, not a config switch).
 
 ## Risks / debt
-(3 bullets max)
+- Extraction quality on real bills is unknown until we have a corpus; the heuristic
+  extractor is a baseline, not the plan.
+- Scanned/image-only PDFs need OCR or a vision model — a dependency decision deferred
+  until a real sample demands it.
+- Single-writer SQLite suits one ingest service; a second writer means Turso or Postgres.

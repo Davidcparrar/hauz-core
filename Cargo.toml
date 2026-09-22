@@ -22,6 +22,14 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 proptest = "1"
 assert_cmd = "2"
+# Storage + ingest (decided 2026-09-21, docs/decisions.md #0)
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "time"] }
+mail-parser = "0.11"
+pdf-extract = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+time = { version = "0.3", features = ["parsing", "formatting", "macros", "serde"] }
 
 # rustc lints stay `warn`: a `deny` here would break `cargo test` mid red-green.
 # verify.sh runs clippy with `-D warnings`, which promotes everything below.

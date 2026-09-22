@@ -37,7 +37,8 @@ Acceptance tests live in `crates/<c>/tests/` and therefore cannot see internals.
 
 ## Dependencies
 Allowed (workspace-pinned): thiserror, anyhow, tokio, axum, tower, http-body-util,
-proptest, assert_cmd. Adding one = a line in `docs/decisions.md` + an explicit human yes.
+proptest, assert_cmd, sqlx (sqlite), mail-parser, pdf-extract, serde, serde_json, sha2,
+time. Adding one = a line in `docs/decisions.md` + an explicit human yes.
 Agents never run `cargo add`.
 
 ## GPUI (when `crates/app` exists)
