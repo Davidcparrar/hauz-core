@@ -27,6 +27,9 @@ pub enum Error {
     /// A billing period's end date preceded its start date.
     #[error("billing period end must not precede start")]
     InvertedPeriod,
+    /// An extracted bill was missing its vendor, amount, or billing period.
+    #[error("extracted bill is missing vendor, amount, or period")]
+    IncompleteBill,
 }
 
 /// A validated ISO-4217-shaped currency code: exactly 3 ASCII uppercase letters.
@@ -236,5 +239,123 @@ impl TryFrom<BillingPeriodRaw> for BillingPeriod {
 
     fn try_from(raw: BillingPeriodRaw) -> Result<Self, Error> {
         Self::new(raw.start, raw.end)
+    }
+}
+
+/// Whether a bill's fields came from automated extraction or still need a human to fill
+/// them in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// All required fields (vendor, amount, period) are present.
+    Extracted,
+    /// One or more fields could not be extracted and need a human to fill them in.
+    NeedsReview,
+}
+
+/// The unvalidated shape a [`Bill`] is built from. Every field is already its own validated
+/// type; only the *combination* — which fields [`Status::Extracted`] requires — can still be
+/// wrong, so that check lives in [`Bill`]'s `TryFrom` impl.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BillDraft {
+    /// The bill's identifier.
+    pub id: BillId,
+    /// The vendor, when known.
+    pub vendor: Option<Vendor>,
+    /// The amount, when known.
+    pub amount: Option<Money>,
+    /// The billing period, when known.
+    pub period: Option<BillingPeriod>,
+    /// The due date, when known.
+    pub due: Option<time::Date>,
+    /// Whether this draft's fields were fully extracted or still need review.
+    pub status: Status,
+}
+
+/// A bill: complete when [`Status::Extracted`], possibly partial when
+/// [`Status::NeedsReview`]. Construct only via `TryFrom<BillDraft>` — including through
+/// deserialization, which routes through the same check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BillDraft", into = "BillDraft")]
+pub struct Bill {
+    id: BillId,
+    vendor: Option<Vendor>,
+    amount: Option<Money>,
+    period: Option<BillingPeriod>,
+    due: Option<time::Date>,
+    status: Status,
+}
+
+impl Bill {
+    /// The bill's identifier.
+    #[must_use]
+    pub fn id(&self) -> &BillId {
+        &self.id
+    }
+
+    /// The vendor, when known.
+    #[must_use]
+    pub fn vendor(&self) -> Option<&Vendor> {
+        self.vendor.as_ref()
+    }
+
+    /// The amount, when known.
+    #[must_use]
+    pub fn amount(&self) -> Option<&Money> {
+        self.amount.as_ref()
+    }
+
+    /// The billing period, when known.
+    #[must_use]
+    pub fn period(&self) -> Option<&BillingPeriod> {
+        self.period.as_ref()
+    }
+
+    /// The due date, when known.
+    #[must_use]
+    pub fn due(&self) -> Option<time::Date> {
+        self.due
+    }
+
+    /// Whether this bill's fields were fully extracted or still need review.
+    #[must_use]
+    pub fn status(&self) -> Status {
+        self.status
+    }
+}
+
+impl TryFrom<BillDraft> for Bill {
+    type Error = Error;
+
+    /// # Errors
+    /// Returns [`Error::IncompleteBill`] when `draft.status` is [`Status::Extracted`] and
+    /// `vendor`, `amount`, or `period` is `None`.
+    fn try_from(draft: BillDraft) -> Result<Self, Error> {
+        if draft.status == Status::Extracted
+            && (draft.vendor.is_none() || draft.amount.is_none() || draft.period.is_none())
+        {
+            return Err(Error::IncompleteBill);
+        }
+        Ok(Self {
+            id: draft.id,
+            vendor: draft.vendor,
+            amount: draft.amount,
+            period: draft.period,
+            due: draft.due,
+            status: draft.status,
+        })
+    }
+}
+
+impl From<Bill> for BillDraft {
+    fn from(bill: Bill) -> Self {
+        Self {
+            id: bill.id,
+            vendor: bill.vendor,
+            amount: bill.amount,
+            period: bill.period,
+            due: bill.due,
+            status: bill.status,
+        }
     }
 }

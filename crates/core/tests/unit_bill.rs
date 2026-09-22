@@ -1,8 +1,20 @@
 //! [unit] tests for the `bill` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
-use hauz_core::bill::{BillId, BillingPeriod, Currency, Error, Money, Vendor};
+use hauz_core::bill::{Bill, BillDraft, BillId, BillingPeriod, Currency, Error, Money, Status, Vendor};
 use time::macros::date;
+
+/// A `BillDraft` with every optional field populated, status `Extracted`.
+fn complete_draft() -> Result<BillDraft, Error> {
+    Ok(BillDraft {
+        id: BillId::new("bill-1")?,
+        vendor: Some(Vendor::new("Acme Power")?),
+        amount: Some(Money::new(1000, Currency::new("USD")?)),
+        period: Some(BillingPeriod::new(date!(2026 - 01 - 01), date!(2026 - 01 - 31))?),
+        due: Some(date!(2026 - 02 - 15)),
+        status: Status::Extracted,
+    })
+}
 
 #[test]
 fn ac1_accepts_three_ascii_uppercase_letters() -> Result<(), Error> {
@@ -103,4 +115,86 @@ fn ac6_rejects_end_before_start() {
     let start = date!(2026 - 01 - 15);
     let end = date!(2026 - 01 - 14);
     assert_eq!(BillingPeriod::new(start, end), Err(Error::InvertedPeriod));
+}
+
+#[test]
+fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<(), Error> {
+    let mut missing_vendor = complete_draft()?;
+    missing_vendor.vendor = None;
+    assert_eq!(Bill::try_from(missing_vendor), Err(Error::IncompleteBill));
+
+    let mut missing_amount = complete_draft()?;
+    missing_amount.amount = None;
+    assert_eq!(Bill::try_from(missing_amount), Err(Error::IncompleteBill));
+
+    let mut missing_period = complete_draft()?;
+    missing_period.period = None;
+    assert_eq!(Bill::try_from(missing_period), Err(Error::IncompleteBill));
+    Ok(())
+}
+
+#[test]
+fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_none(
+) -> Result<(), Error> {
+    let mut draft = complete_draft()?;
+    draft.due = None;
+    let bill = Bill::try_from(draft)?;
+    assert_eq!(bill.due(), None);
+    assert!(bill.vendor().is_some());
+    assert!(bill.amount().is_some());
+    assert!(bill.period().is_some());
+    Ok(())
+}
+
+#[test]
+fn ac8_needs_review_bill_accepts_any_subset_of_optional_fields() -> Result<(), Error> {
+    let mut none_set = complete_draft()?;
+    none_set.status = Status::NeedsReview;
+    none_set.vendor = None;
+    none_set.amount = None;
+    none_set.period = None;
+    none_set.due = None;
+    let bill = Bill::try_from(none_set)?;
+    assert_eq!(bill.status(), Status::NeedsReview);
+    assert_eq!(bill.vendor(), None);
+
+    let mut some_set = complete_draft()?;
+    some_set.status = Status::NeedsReview;
+    some_set.amount = None;
+    let bill = Bill::try_from(some_set)?;
+    assert!(bill.vendor().is_some());
+    assert_eq!(bill.amount(), None);
+    Ok(())
+}
+
+#[test]
+fn ac9_deserialize_fails_on_invalid_currency() {
+    let json = r#""usd""#;
+    assert!(serde_json::from_str::<Currency>(json).is_err());
+}
+
+#[test]
+fn ac9_deserialize_fails_on_inverted_period() {
+    let json = r#"{"start":"2026-01-15","end":"2026-01-14"}"#;
+    assert!(serde_json::from_str::<BillingPeriod>(json).is_err());
+}
+
+#[test]
+fn ac9_deserialize_fails_on_extracted_bill_missing_amount() {
+    let json = r#"{
+        "id":"bill-1",
+        "vendor":"Acme Power",
+        "period":{"start":"2026-01-01","end":"2026-01-31"},
+        "status":"extracted"
+    }"#;
+    assert!(serde_json::from_str::<Bill>(json).is_err());
+}
+
+#[test]
+fn ac10_status_serializes_snake_case_and_reads_back() -> Result<(), serde_json::Error> {
+    assert_eq!(serde_json::to_string(&Status::Extracted)?, r#""extracted""#);
+    assert_eq!(serde_json::to_string(&Status::NeedsReview)?, r#""needs_review""#);
+    assert_eq!(serde_json::from_str::<Status>(r#""extracted""#)?, Status::Extracted);
+    assert_eq!(serde_json::from_str::<Status>(r#""needs_review""#)?, Status::NeedsReview);
+    Ok(())
 }
