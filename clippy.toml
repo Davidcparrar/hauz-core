@@ -1,0 +1,7 @@
+# Restriction lints denied in Cargo.toml do not apply to #[test] fns / #[cfg(test)] modules,
+# including files under tests/. Helper fns without #[test] are still linted: return Result, use `?`.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true

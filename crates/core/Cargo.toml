@@ -1,0 +1,17 @@
+[package]
+# Renamed in /project-init to <project>-core. Never plain "core": it clashes with libcore.
+name = "myproj-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+

@@ -1,0 +1,60 @@
+# Workspace root. Rust rules that can be lints ARE lints (0 tokens at runtime).
+# Members opt in with `[lints] workspace = true` — a crate without it is unlinted.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# Spikes are standalone crates under features/<n>/spike/ — never workspace members.
+exclude = ["features"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+# One version per dependency; members use `{ workspace = true }`.
+# Adding a line here is a decision (docs/decisions.md + a human yes).
+[workspace.dependencies]
+thiserror = "2"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+proptest = "1"
+assert_cmd = "2"
+
+# rustc lints stay `warn`: a `deny` here would break `cargo test` mid red-green.
+# verify.sh runs clippy with `-D warnings`, which promotes everything below.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+# A `pub` item not reachable from the crate root must be pub(crate) or re-exported.
+# This is the "testable surface = pub reachable from root" rule, compiler-enforced.
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# restriction group — cherry-picked, never enabled wholesale. Tests are exempt via clippy.toml.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+indexing_slicing = "deny"
+# `warn`, not deny: foreign #[non_exhaustive] enums (io::ErrorKind) legitimately need `_`.
+# Escape hatch: #[allow(clippy::wildcard_enum_match_arm)] with a one-line reason.
+wildcard_enum_match_arm = "warn"
+# pedantic cherry-picks (the whole group blocks Sonnet on missing_errors_doc etc.)
+must_use_candidate = "warn"
+fn_params_excessive_bools = "warn"
+match_wildcard_for_single_variants = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+semicolon_if_nothing_returned = "warn"
+# nursery: known false positives, fix or allow with a comment
+fallible_impl_from = "warn"
+
+[profile.dev]
+debug = "line-tables-only"

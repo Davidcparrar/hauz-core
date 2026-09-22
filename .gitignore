@@ -1,0 +1,5 @@
+# cargo build output at any depth (workspace + standalone spike crates)
+**/target/
+# keep *.proptest-regressions: they are found counterexamples, not build output
+# brownfield onboarding notes are scratch, not docs
+docs/onboarding/
