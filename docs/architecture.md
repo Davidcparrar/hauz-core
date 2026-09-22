@@ -28,9 +28,9 @@ message), analytics, frontend, mobile.
 ```
 
 ## Modules in `core`
-- `bill` — owns the domain vocabulary; interface: `Bill`, `BillId`, `Money` (minor units +
-  ISO currency), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`. Parse, don't validate:
-  constructors are fallible.
+- `bill` — owns the domain vocabulary; interface: `Bill`, `BillDraft`, `BillId`, `Money`
+  (minor units + `Currency`), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
+  Parse, don't validate: fallible constructors; `Bill` only via `TryFrom<BillDraft>`, serde too.
 - `email` — owns MIME decoding; interface: `Envelope::parse(&[u8])`, yielding subject,
   sender, date, text/HTML body and `Vec<Document>` (mime type, filename, bytes).
 - `extract` — owns "document ⇒ candidate fields"; interface: `trait Extractor`,
@@ -58,7 +58,7 @@ the application code never talks to S3. Turso stays possible later behind `BillS
 
 ## Risks / debt
 - Extraction quality on real bills is unknown until we have a corpus; the heuristic
-  extractor is a baseline, not the plan.
-- Scanned/image-only PDFs need OCR or a vision model — a dependency decision deferred
-  until a real sample demands it.
+  extractor is a baseline.
+- Scanned/image-only PDFs need OCR or a vision model — deferred until a real sample
+  demands it.
 - Single-writer SQLite suits one ingest service; a second writer means Turso or Postgres.

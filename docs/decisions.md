@@ -7,3 +7,4 @@
 - 2026-09-21 #0: money = integer minor units + ISO currency code, no decimal crate — because it is exact, sortable, and trivially stored as INTEGER
 - 2026-09-21 #0: `time` over `jiff`/`chrono` for dates — because sqlx ships a native `time` feature, so no glue types
 - 2026-09-21 #0: allowed deps += sqlx, mail-parser, pdf-extract, serde, serde_json, sha2, time — pinned in the workspace so implementers only add `{ workspace = true }` in their crate
+- 2026-09-21 #1: `Bill` is built via `TryFrom<BillDraft>` (plain struct, pub fields) with `#[serde(try_from, into)]` over a many-argument constructor — because one entry point enforces the status/field invariants for both code and JSON
