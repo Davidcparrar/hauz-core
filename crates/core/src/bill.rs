@@ -24,6 +24,9 @@ pub enum Error {
     /// A bill id was empty, contained whitespace or non-ASCII bytes, or exceeded 128 bytes.
     #[error("bill id must be 1-128 ASCII graphic bytes with no whitespace")]
     InvalidBillId,
+    /// A billing period's end date preceded its start date.
+    #[error("billing period end must not precede start")]
+    InvertedPeriod,
 }
 
 /// A validated ISO-4217-shaped currency code: exactly 3 ASCII uppercase letters.
@@ -184,5 +187,54 @@ impl TryFrom<String> for BillId {
 
     fn try_from(raw: String) -> Result<Self, Error> {
         Self::new(&raw)
+    }
+}
+
+/// A validated billing period: an inclusive `[start, end]` date range where `end >= start`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "BillingPeriodRaw")]
+pub struct BillingPeriod {
+    start: time::Date,
+    end: time::Date,
+}
+
+/// The unvalidated shape a [`BillingPeriod`] is deserialized from, before the ordering
+/// invariant is checked.
+#[derive(Deserialize)]
+struct BillingPeriodRaw {
+    start: time::Date,
+    end: time::Date,
+}
+
+impl BillingPeriod {
+    /// Parse, don't validate.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvertedPeriod`] when `end` precedes `start`.
+    pub fn new(start: time::Date, end: time::Date) -> Result<Self, Error> {
+        if end < start {
+            return Err(Error::InvertedPeriod);
+        }
+        Ok(Self { start, end })
+    }
+
+    /// The first day of the period.
+    #[must_use]
+    pub fn start(&self) -> time::Date {
+        self.start
+    }
+
+    /// The last day of the period.
+    #[must_use]
+    pub fn end(&self) -> time::Date {
+        self.end
+    }
+}
+
+impl TryFrom<BillingPeriodRaw> for BillingPeriod {
+    type Error = Error;
+
+    fn try_from(raw: BillingPeriodRaw) -> Result<Self, Error> {
+        Self::new(raw.start, raw.end)
     }
 }

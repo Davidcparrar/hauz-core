@@ -1,7 +1,8 @@
 //! [unit] tests for the `bill` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
-use hauz_core::bill::{BillId, Currency, Error, Money, Vendor};
+use hauz_core::bill::{BillId, BillingPeriod, Currency, Error, Money, Vendor};
+use time::macros::date;
 
 #[test]
 fn ac1_accepts_three_ascii_uppercase_letters() -> Result<(), Error> {
@@ -86,4 +87,20 @@ fn ac5_rejects_empty_whitespace_non_ascii_or_over_128_bytes() {
     for raw in ["", "has space", "café", too_long.as_str()] {
         assert_eq!(BillId::new(raw), Err(Error::InvalidBillId), "input: {raw:?}");
     }
+}
+
+#[test]
+fn ac6_accepts_end_equal_to_start_as_one_day_period() -> Result<(), Error> {
+    let day = date!(2026 - 01 - 15);
+    let period = BillingPeriod::new(day, day)?;
+    assert_eq!(period.start(), day);
+    assert_eq!(period.end(), day);
+    Ok(())
+}
+
+#[test]
+fn ac6_rejects_end_before_start() {
+    let start = date!(2026 - 01 - 15);
+    let end = date!(2026 - 01 - 14);
+    assert_eq!(BillingPeriod::new(start, end), Err(Error::InvertedPeriod));
 }
