@@ -78,7 +78,10 @@ impl Money {
     /// Any `i64` (negative, zero, or `i64::MAX`) is a valid amount of minor units.
     #[must_use]
     pub fn new(minor_units: i64, currency: Currency) -> Self {
-        Self { minor_units, currency }
+        Self {
+            minor_units,
+            currency,
+        }
     }
 
     /// The amount, in minor units, unchanged from construction.

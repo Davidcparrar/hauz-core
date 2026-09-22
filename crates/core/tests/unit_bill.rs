@@ -1,7 +1,9 @@
 //! [unit] tests for the `bill` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
-use hauz_core::bill::{Bill, BillDraft, BillId, BillingPeriod, Currency, Error, Money, Status, Vendor};
+use hauz_core::bill::{
+    Bill, BillDraft, BillId, BillingPeriod, Currency, Error, Money, Status, Vendor,
+};
 use time::macros::date;
 
 /// A `BillDraft` with every optional field populated, status `Extracted`.
@@ -10,7 +12,10 @@ fn complete_draft() -> Result<BillDraft, Error> {
         id: BillId::new("bill-1")?,
         vendor: Some(Vendor::new("Acme Power")?),
         amount: Some(Money::new(1000, Currency::new("USD")?)),
-        period: Some(BillingPeriod::new(date!(2026 - 01 - 01), date!(2026 - 01 - 31))?),
+        period: Some(BillingPeriod::new(
+            date!(2026 - 01 - 01),
+            date!(2026 - 01 - 31),
+        )?),
         due: Some(date!(2026 - 02 - 15)),
         status: Status::Extracted,
     })
@@ -26,7 +31,11 @@ fn ac1_accepts_three_ascii_uppercase_letters() -> Result<(), Error> {
 #[test]
 fn ac1_rejects_lowercase_two_four_digits_whitespace_and_empty() {
     for raw in ["usd", "US", "USDD", "US1", "   ", ""] {
-        assert_eq!(Currency::new(raw), Err(Error::InvalidCurrency), "input: {raw:?}");
+        assert_eq!(
+            Currency::new(raw),
+            Err(Error::InvalidCurrency),
+            "input: {raw:?}"
+        );
     }
 }
 
@@ -97,7 +106,11 @@ fn ac5_accepts_one_to_128_ascii_graphic_bytes() -> Result<(), Error> {
 fn ac5_rejects_empty_whitespace_non_ascii_or_over_128_bytes() {
     let too_long = "a".repeat(129);
     for raw in ["", "has space", "café", too_long.as_str()] {
-        assert_eq!(BillId::new(raw), Err(Error::InvalidBillId), "input: {raw:?}");
+        assert_eq!(
+            BillId::new(raw),
+            Err(Error::InvalidBillId),
+            "input: {raw:?}"
+        );
     }
 }
 
@@ -134,8 +147,8 @@ fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<
 }
 
 #[test]
-fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_none(
-) -> Result<(), Error> {
+fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_none()
+-> Result<(), Error> {
     let mut draft = complete_draft()?;
     draft.due = None;
     let bill = Bill::try_from(draft)?;
@@ -193,8 +206,17 @@ fn ac9_deserialize_fails_on_extracted_bill_missing_amount() {
 #[test]
 fn ac10_status_serializes_snake_case_and_reads_back() -> Result<(), serde_json::Error> {
     assert_eq!(serde_json::to_string(&Status::Extracted)?, r#""extracted""#);
-    assert_eq!(serde_json::to_string(&Status::NeedsReview)?, r#""needs_review""#);
-    assert_eq!(serde_json::from_str::<Status>(r#""extracted""#)?, Status::Extracted);
-    assert_eq!(serde_json::from_str::<Status>(r#""needs_review""#)?, Status::NeedsReview);
+    assert_eq!(
+        serde_json::to_string(&Status::NeedsReview)?,
+        r#""needs_review""#
+    );
+    assert_eq!(
+        serde_json::from_str::<Status>(r#""extracted""#)?,
+        Status::Extracted
+    );
+    assert_eq!(
+        serde_json::from_str::<Status>(r#""needs_review""#)?,
+        Status::NeedsReview
+    );
     Ok(())
 }
