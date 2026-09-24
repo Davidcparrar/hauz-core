@@ -6,8 +6,11 @@ use hauz_core::bill::{
 };
 use time::macros::date;
 
+/// Boxed so any error type propagates with `?`; tests never unwrap or expect.
+type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
 /// A `BillDraft` with every optional field populated, status `Extracted`.
-fn complete_draft() -> Result<BillDraft, Error> {
+fn complete_draft() -> Result<BillDraft> {
     Ok(BillDraft {
         id: BillId::new("bill-1")?,
         vendor: Some(Vendor::new("Acme Power")?),
@@ -22,7 +25,7 @@ fn complete_draft() -> Result<BillDraft, Error> {
 }
 
 #[test]
-fn ac1_accepts_three_ascii_uppercase_letters() -> Result<(), Error> {
+fn ac1_accepts_three_ascii_uppercase_letters() -> Result<()> {
     let currency = Currency::new("USD")?;
     assert_eq!(currency.as_str(), "USD");
     Ok(())
@@ -40,7 +43,7 @@ fn ac1_rejects_lowercase_two_four_digits_whitespace_and_empty() {
 }
 
 #[test]
-fn ac2_accepts_any_i64_unchanged() -> Result<(), Error> {
+fn ac2_accepts_any_i64_unchanged() -> Result<()> {
     let usd = Currency::new("USD")?;
     for minor_units in [i64::MIN, -1, 0, 1, i64::MAX] {
         let money = Money::new(minor_units, usd.clone());
@@ -51,7 +54,7 @@ fn ac2_accepts_any_i64_unchanged() -> Result<(), Error> {
 }
 
 #[test]
-fn ac3_checked_add_and_sub_reject_currency_mismatch() -> Result<(), Error> {
+fn ac3_checked_add_and_sub_reject_currency_mismatch() -> Result<()> {
     let usd = Money::new(100, Currency::new("USD")?);
     let eur = Money::new(100, Currency::new("EUR")?);
     assert_eq!(usd.checked_add(&eur), Err(Error::CurrencyMismatch));
@@ -60,7 +63,7 @@ fn ac3_checked_add_and_sub_reject_currency_mismatch() -> Result<(), Error> {
 }
 
 #[test]
-fn ac3_checked_add_and_sub_reject_overflow() -> Result<(), Error> {
+fn ac3_checked_add_and_sub_reject_overflow() -> Result<()> {
     let usd = Currency::new("USD")?;
     let max = Money::new(i64::MAX, usd.clone());
     let one = Money::new(1, usd.clone());
@@ -71,7 +74,7 @@ fn ac3_checked_add_and_sub_reject_overflow() -> Result<(), Error> {
 }
 
 #[test]
-fn ac3_checked_add_and_sub_carry_the_shared_currency() -> Result<(), Error> {
+fn ac3_checked_add_and_sub_carry_the_shared_currency() -> Result<()> {
     let usd = Currency::new("USD")?;
     let a = Money::new(300, usd.clone());
     let b = Money::new(100, usd.clone());
@@ -81,7 +84,7 @@ fn ac3_checked_add_and_sub_carry_the_shared_currency() -> Result<(), Error> {
 }
 
 #[test]
-fn ac4_trims_surrounding_whitespace() -> Result<(), Error> {
+fn ac4_trims_surrounding_whitespace() -> Result<()> {
     let vendor = Vendor::new("  Acme Power  ")?;
     assert_eq!(vendor.name(), "Acme Power");
     Ok(())
@@ -94,7 +97,7 @@ fn ac4_rejects_a_name_empty_after_trimming() {
 }
 
 #[test]
-fn ac5_accepts_one_to_128_ascii_graphic_bytes() -> Result<(), Error> {
+fn ac5_accepts_one_to_128_ascii_graphic_bytes() -> Result<()> {
     let id = BillId::new("bill-42")?;
     assert_eq!(id.as_str(), "bill-42");
     let max = "a".repeat(128);
@@ -115,7 +118,7 @@ fn ac5_rejects_empty_whitespace_non_ascii_or_over_128_bytes() {
 }
 
 #[test]
-fn ac6_accepts_end_equal_to_start_as_one_day_period() -> Result<(), Error> {
+fn ac6_accepts_end_equal_to_start_as_one_day_period() -> Result<()> {
     let day = date!(2026 - 01 - 15);
     let period = BillingPeriod::new(day, day)?;
     assert_eq!(period.start(), day);
@@ -131,7 +134,7 @@ fn ac6_rejects_end_before_start() {
 }
 
 #[test]
-fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<(), Error> {
+fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<()> {
     let mut missing_vendor = complete_draft()?;
     missing_vendor.vendor = None;
     assert_eq!(Bill::try_from(missing_vendor), Err(Error::IncompleteBill));
@@ -147,8 +150,8 @@ fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<
 }
 
 #[test]
-fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_none()
--> Result<(), Error> {
+fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_none() -> Result<()>
+{
     let mut draft = complete_draft()?;
     draft.due = None;
     let bill = Bill::try_from(draft)?;
@@ -160,7 +163,7 @@ fn ac7_extracted_bill_with_vendor_amount_and_period_is_accepted_and_due_may_be_n
 }
 
 #[test]
-fn ac8_needs_review_bill_accepts_any_subset_of_optional_fields() -> Result<(), Error> {
+fn ac8_needs_review_bill_accepts_any_subset_of_optional_fields() -> Result<()> {
     let mut none_set = complete_draft()?;
     none_set.status = Status::NeedsReview;
     none_set.vendor = None;
@@ -204,7 +207,7 @@ fn ac9_deserialize_fails_on_extracted_bill_missing_amount() {
 }
 
 #[test]
-fn ac10_status_serializes_snake_case_and_reads_back() -> Result<(), serde_json::Error> {
+fn ac10_status_serializes_snake_case_and_reads_back() -> Result<()> {
     assert_eq!(serde_json::to_string(&Status::Extracted)?, r#""extracted""#);
     assert_eq!(
         serde_json::to_string(&Status::NeedsReview)?,

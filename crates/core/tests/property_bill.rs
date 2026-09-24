@@ -94,21 +94,17 @@ proptest! {
         minor_b in (i64::MIN / 2)..=(i64::MAX / 2),
         currency in arb_currency(),
     ) {
+        // Operands are drawn from half the i64 range, so neither step can overflow.
         let a = Money::new(minor_a, currency.clone());
         let b = Money::new(minor_b, currency);
-        let sum = a.checked_add(&b);
-        prop_assume!(sum.is_ok());
-        let sum = sum.expect("checked above");
-        let diff = sum.checked_sub(&b);
-        prop_assume!(diff.is_ok());
-        let diff = diff.expect("checked above");
+        let diff = a.checked_add(&b)?.checked_sub(&b)?;
         prop_assert_eq!(diff, a);
     }
 
     #[test]
     fn ac12_json_round_trips(bill in arb_bill()) {
-        let json = serde_json::to_string(&bill).expect("bill must serialize");
-        let parsed: Bill = serde_json::from_str(&json).expect("bill must deserialize");
+        let json = serde_json::to_string(&bill)?;
+        let parsed: Bill = serde_json::from_str(&json)?;
         prop_assert_eq!(parsed, bill);
     }
 }
