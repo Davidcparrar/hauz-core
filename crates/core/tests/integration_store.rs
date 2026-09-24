@@ -5,7 +5,7 @@
 mod common;
 
 use common::{Result, TmpDbFile};
-use hauz_core::store::{BillStore, Error, SqliteStore};
+use hauz_core::store::{BillStore, Error, InsertOutcome, SqliteStore};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{ConnectOptions, Row};
 use time::OffsetDateTime;
@@ -170,5 +170,35 @@ async fn ac10_corrupt_id_reports_error() -> Result<()> {
         matches!(&list_err, Err(Error::Corrupt { id, .. }) if id == "bad id"),
         "list returned {list_err:?}"
     );
+    Ok(())
+}
+
+/// Concurrent writers contend for SQLite's single write lock. `BEGIN IMMEDIATE` takes it
+/// up front, so contention must be absorbed by the busy timeout, never surfaced as
+/// `Error::Backend`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn store_busy_timeout_concurrent_inserts_all_succeed() -> Result<()> {
+    let db = TmpDbFile::new("busy");
+    let store = SqliteStore::open(&db.path).await?;
+
+    let mut tasks = tokio::task::JoinSet::new();
+    for n in 0..16u8 {
+        let store = store.clone();
+        tasks.spawn(async move {
+            // Task errors cross a thread boundary, so they travel as `String`, not `Box<dyn Error>`.
+            let bill = common::extracted_bill(&format!("bill-{n}")).map_err(|e| e.to_string())?;
+            let outcome = store
+                .insert(&common::hash(n), &bill)
+                .await
+                .map_err(|e| e.to_string())?;
+            assert_eq!(outcome, InsertOutcome::Inserted(bill.id().clone()));
+            Ok::<(), String>(())
+        });
+    }
+    while let Some(joined) = tasks.join_next().await {
+        joined??;
+    }
+
+    assert_eq!(store.list().await?.len(), 16);
     Ok(())
 }
