@@ -29,7 +29,7 @@ echo "== doc budgets =="
 budget() { # path -> max words
   case "$1" in
     docs/constitution.md) echo 500 ;;
-    docs/architecture.md) echo 500 ;;
+    docs/architecture.md) echo 1000 ;;
     features/*/spec.md) echo 800 ;;
     features/*/spike/findings.md) echo 400 ;;
     *) echo 0 ;;

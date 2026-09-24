@@ -1,0 +1,39 @@
+# Throwaway spike crate — never a workspace member (see root Cargo.toml `exclude`).
+[workspace]
+
+[package]
+name = "spike-2"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+hauz-core = { path = "../../../../crates/core" }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+time = { version = "0.3", features = ["parsing", "formatting", "macros", "serde"] }
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+indexing_slicing = "deny"
+wildcard_enum_match_arm = "warn"
+must_use_candidate = "warn"
+fn_params_excessive_bools = "warn"
+match_wildcard_for_single_variants = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+semicolon_if_nothing_returned = "warn"
+fallible_impl_from = "warn"
