@@ -116,12 +116,11 @@ fn decode_status(raw: &str) -> Result<Status, String> {
     }
 }
 
-/// Rebuilds a `BillDraft` from already-fetched column values, without allocating a
-/// [`BillId`] until the id itself is known to be valid; each failure carries a
-/// human-readable reason.
+/// Rebuilds a `BillDraft` from already-fetched column values and an already-decoded id;
+/// each failure carries a human-readable reason.
 #[allow(clippy::too_many_arguments)] // one arg per stored column, all needed to rebuild a Bill
 fn build_draft(
-    id_raw: &str,
+    id: BillId,
     vendor: Option<String>,
     amount_minor: Option<i64>,
     currency: Option<String>,
@@ -130,7 +129,6 @@ fn build_draft(
     due: Option<time::Date>,
     status_raw: &str,
 ) -> Result<BillDraft, String> {
-    let id = BillId::new(id_raw).map_err(|e| e.to_string())?;
     let status = decode_status(status_raw)?;
     let vendor = vendor
         .map(|v| Vendor::new(&v))
@@ -176,7 +174,7 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
         reason,
     };
     let draft = build_draft(
-        &id_raw,
+        decode_id(&id_raw)?,
         vendor,
         amount_minor,
         currency,
@@ -188,6 +186,9 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     .map_err(to_corrupt)?;
     Bill::try_from(draft).map_err(|source| to_corrupt(source.to_string()))
 }
+
+/// How long a pooled connection waits for the SQLite write lock before giving up.
+const WRITE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// A `SqlitePool`-backed `BillStore`: one file, WAL mode, embedded migrations.
 #[derive(Debug, Clone)]
@@ -207,7 +208,11 @@ impl SqliteStore {
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal);
+            .journal_mode(SqliteJournalMode::Wal)
+            // `BEGIN IMMEDIATE` takes the write lock up front, which is the one place
+            // SQLite honors the busy handler; pinned here so contention between pooled
+            // writers waits instead of surfacing as `Error::Backend` (SQLITE_BUSY).
+            .busy_timeout(WRITE_LOCK_WAIT);
         let pool = SqlitePoolOptions::new().connect_with(options).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Ok(Self { pool })
