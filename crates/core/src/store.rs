@@ -12,7 +12,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::{Row, SqlitePool};
 use time::OffsetDateTime;
 
-use crate::bill;
 use crate::bill::{Bill, BillDraft, BillId, BillingPeriod, Currency, Money, Status, Vendor};
 
 /// A 32-byte hash of the raw message a `Bill` was extracted from. `store` only keys on it;
@@ -41,13 +40,16 @@ pub enum Error {
     /// The bill's id already exists under a different hash.
     #[error("bill id already exists: {0:?}")]
     DuplicateId(BillId),
-    /// A stored row did not reconstruct into a valid `Bill`.
-    #[error("stored row for {id:?} is corrupt: {source}")]
+    /// A stored row did not reconstruct into a valid `Bill`: an id that fails
+    /// [`BillId::new`], an unknown `status` string, or any column whose text fails its
+    /// validated type's constructor.
+    #[error("stored row {id:?} is corrupt: {reason}")]
     Corrupt {
-        /// The id of the corrupt row.
-        id: BillId,
-        /// Why the row's fields did not reconstruct a valid `Bill`.
-        source: bill::Error,
+        /// The raw stored `id` column text (may itself be invalid, so it is not a
+        /// [`BillId`]).
+        id: String,
+        /// Human-readable reason the row's columns did not reconstruct a valid `Bill`.
+        reason: String,
     },
     /// The underlying storage backend failed.
     #[error("storage backend error: {0}")]
@@ -97,10 +99,63 @@ pub trait BillStore: Send + Sync {
 /// Parses a row's `id` column, which the store always writes as an already-validated
 /// [`BillId`]; a failure here means the column no longer holds that invariant.
 fn decode_id(raw: &str) -> Result<BillId, Error> {
-    BillId::new(raw).map_err(|_| {
-        Error::Backend(sqlx::Error::Decode(
-            format!("invalid id column: {raw:?}").into(),
-        ))
+    BillId::new(raw).map_err(|source| Error::Corrupt {
+        id: raw.to_owned(),
+        reason: source.to_string(),
+    })
+}
+
+/// Parses the `status` column. Unlike the other columns this has no validated type of its
+/// own to delegate to: an unrecognized value is corrupt data, never silently coerced to
+/// [`Status::NeedsReview`].
+fn decode_status(raw: &str) -> Result<Status, String> {
+    match raw {
+        "extracted" => Ok(Status::Extracted),
+        "needs_review" => Ok(Status::NeedsReview),
+        other => Err(format!("unknown status {other:?}")),
+    }
+}
+
+/// Rebuilds a `BillDraft` from already-fetched column values, without allocating a
+/// [`BillId`] until the id itself is known to be valid; each failure carries a
+/// human-readable reason.
+#[allow(clippy::too_many_arguments)] // one arg per stored column, all needed to rebuild a Bill
+fn build_draft(
+    id_raw: &str,
+    vendor: Option<String>,
+    amount_minor: Option<i64>,
+    currency: Option<String>,
+    period_start: Option<time::Date>,
+    period_end: Option<time::Date>,
+    due: Option<time::Date>,
+    status_raw: &str,
+) -> Result<BillDraft, String> {
+    let id = BillId::new(id_raw).map_err(|e| e.to_string())?;
+    let status = decode_status(status_raw)?;
+    let vendor = vendor
+        .map(|v| Vendor::new(&v))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let amount = match (amount_minor, currency) {
+        (Some(minor_units), Some(code)) => Some(Money::new(
+            minor_units,
+            Currency::new(&code).map_err(|e| e.to_string())?,
+        )),
+        _ => None,
+    };
+    let period = match (period_start, period_end) {
+        (Some(start), Some(end)) => {
+            Some(BillingPeriod::new(start, end).map_err(|e| e.to_string())?)
+        }
+        _ => None,
+    };
+    Ok(BillDraft {
+        id,
+        vendor,
+        amount,
+        period,
+        due,
+        status,
     })
 }
 
@@ -108,7 +163,6 @@ fn decode_id(raw: &str) -> Result<BillId, Error> {
 /// period_end, due, status` row.
 fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     let id_raw: String = row.try_get("id")?;
-    let id = decode_id(&id_raw)?;
     let vendor: Option<String> = row.try_get("vendor")?;
     let amount_minor: Option<i64> = row.try_get("amount_minor")?;
     let currency: Option<String> = row.try_get("currency")?;
@@ -117,34 +171,22 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     let due: Option<time::Date> = row.try_get("due")?;
     let status_raw: String = row.try_get("status")?;
 
-    let draft_result: Result<BillDraft, bill::Error> = (|| {
-        Ok(BillDraft {
-            id: id.clone(),
-            vendor: vendor.map(|v| Vendor::new(&v)).transpose()?,
-            amount: match (amount_minor, currency) {
-                (Some(minor_units), Some(code)) => {
-                    Some(Money::new(minor_units, Currency::new(&code)?))
-                }
-                _ => None,
-            },
-            period: match (period_start, period_end) {
-                (Some(start), Some(end)) => Some(BillingPeriod::new(start, end)?),
-                _ => None,
-            },
-            due,
-            status: if status_raw == "extracted" {
-                Status::Extracted
-            } else {
-                Status::NeedsReview
-            },
-        })
-    })();
-
-    let draft = draft_result.map_err(|source| Error::Corrupt {
-        id: id.clone(),
-        source,
-    })?;
-    Bill::try_from(draft).map_err(|source| Error::Corrupt { id, source })
+    let to_corrupt = |reason: String| Error::Corrupt {
+        id: id_raw.clone(),
+        reason,
+    };
+    let draft = build_draft(
+        &id_raw,
+        vendor,
+        amount_minor,
+        currency,
+        period_start,
+        period_end,
+        due,
+        &status_raw,
+    )
+    .map_err(to_corrupt)?;
+    Bill::try_from(draft).map_err(|source| to_corrupt(source.to_string()))
 }
 
 /// A `SqlitePool`-backed `BillStore`: one file, WAL mode, embedded migrations.
@@ -179,7 +221,10 @@ impl BillStore for SqliteStore {
         bill: &'a Bill,
     ) -> BoxFuture<'a, Result<InsertOutcome, Error>> {
         Box::pin(async move {
-            let mut tx = self.pool.begin().await?;
+            // Hash check, id check, and the write all hold the write lock together: without
+            // `IMMEDIATE`, sqlite's default deferred transaction only takes the write lock on
+            // the first write, letting two concurrent inserts both pass their checks.
+            let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
 
             let by_hash = sqlx::query("SELECT id FROM bills WHERE hash = ?")
                 .bind(hash.as_bytes().as_slice())

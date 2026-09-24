@@ -44,12 +44,42 @@ pub(crate) fn bare_needs_review_bill(id: &str) -> Result<Bill> {
 }
 
 /// A unique tmp-file path for a `SqliteStore` under test, so parallel tests never collide.
-pub(crate) fn tmp_db_path(name: &str) -> std::path::PathBuf {
+fn tmp_db_path(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     std::env::temp_dir().join(format!("hauz-core-store-{name}-{nanos}.sqlite3"))
+}
+
+/// Owns a unique tmp-file path for a `SqliteStore` under test. Its `Drop` removes the file
+/// and its `-wal`/`-shm` sidecars, so cleanup happens on the test's normal return AND on an
+/// early `?` — never rely on cleanup code at the end of a test fn.
+pub(crate) struct TmpDbFile {
+    pub(crate) path: std::path::PathBuf,
+}
+
+impl TmpDbFile {
+    /// A fresh, unused path named after `name` (so parallel tests never collide).
+    pub(crate) fn new(name: &str) -> Self {
+        Self {
+            path: tmp_db_path(name),
+        }
+    }
+
+    fn sidecar(&self, suffix: &str) -> std::path::PathBuf {
+        let mut os = self.path.clone().into_os_string();
+        os.push(suffix);
+        std::path::PathBuf::from(os)
+    }
+}
+
+impl Drop for TmpDbFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(self.sidecar("-wal"));
+        let _ = std::fs::remove_file(self.sidecar("-shm"));
+    }
 }
 
 /// AC1: inserting a `Bill` under a fresh hash returns `Inserted(id)`, and `get(id)` returns an
