@@ -37,11 +37,11 @@ message), analytics, frontend, mobile.
   `Extraction` (partial fields + confidence + source span), `merge(Vec<Extraction>)`.
   First impl is heuristic text/HTML; PDF text and an LLM-backed impl slot in behind the
   same trait.
-- `store` — owns persistence; interface: `trait BillStore` (`insert`, `get`,
-  `find_by_hash`, `list`), `SqliteStore` (sqlx, migrations embedded). The store is a
-  system edge: tests of other modules use an in-memory fake, `store` tests use a tmp-file
-  SQLite.
-- `ingest` — owns the pipeline; interface: `fn ingest(raw: &[u8], ex: &dyn Extractor,
+- `store` — owns persistence; interface: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
+  `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via boxed futures,
+  `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
+  other modules' tests.
+- `ingest` — owns the pipeline; interface: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
   st: &dyn BillStore) -> Result<Outcome>`. Hashes the raw message for idempotency,
   parses, extracts, decides `Status`, persists.
 
