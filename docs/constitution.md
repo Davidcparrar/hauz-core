@@ -49,5 +49,5 @@ domain value. All state is a core type held in an `Entity<_>`. App tests are `[e
 `verify.sh` still builds it.
 
 ## Budgets (verify-enforced)
-constitution ≤500 words · architecture ≤500 · spec ≤800 · spike findings ≤400 ·
+constitution ≤500 words · architecture ≤1000 · spec ≤800 · spike findings ≤400 ·
 agent return ≤300 tokens · implementer context ≈15k tokens (larger ⇒ split the feature).

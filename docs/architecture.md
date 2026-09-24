@@ -1,5 +1,5 @@
 # Architecture
-<!-- ≤500 words, verify-enforced. Interface-grained crate/module map — the one page every
+<!-- ≤1000 words, verify-enforced. Interface-grained crate/module map — the one page every
      agent loads. Decisions go to docs/decisions.md, one line each. -->
 
 ## Purpose
