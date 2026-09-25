@@ -234,7 +234,7 @@ fn pick_amount(
     amounts: &[AmountMatch],
     source: Source,
 ) -> Result<Option<Field<Money>>, Error> {
-    if let Some(found) = anchored(text, &AMOUNT_ANCHORS, amounts, |a| a.start, |a| a.end) {
+    if let Some(found) = anchored(text, &AMOUNT_ANCHORS, amounts, |a| a.start) {
         let confidence = Confidence::new(AMOUNT_ANCHORED)?;
         return Ok(Some(field_of(found, confidence, source, |a| {
             a.money.clone()
@@ -254,7 +254,7 @@ fn pick_due(
     dates: &[DateMatch],
     source: Source,
 ) -> Result<Option<Field<time::Date>>, Error> {
-    if let Some(found) = anchored(text, &DUE_ANCHORS, dates, |d| d.start, |d| d.end) {
+    if let Some(found) = anchored(text, &DUE_ANCHORS, dates, |d| d.start) {
         let confidence = Confidence::new(DATE_ANCHORED)?;
         return Ok(Some(field_of(found, confidence, source, |d| d.date)));
     }
@@ -324,7 +324,6 @@ fn anchored<'a, M>(
     anchors: &[&str],
     matches: &'a [M],
     start: impl Fn(&M) -> usize,
-    end: impl Fn(&M) -> usize,
 ) -> Option<&'a M> {
     for anchor_end in anchor_positions(text, anchors) {
         let found = matches
@@ -335,7 +334,6 @@ fn anchored<'a, M>(
             return found;
         }
     }
-    let _ = end;
     None
 }
 
