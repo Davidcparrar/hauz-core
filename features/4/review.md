@@ -21,3 +21,14 @@ REQUIRED CHANGES:
 1. `docs/architecture.md`: rewrite the `extract` bullet to the shipped interface.
 2. `docs/decisions.md`: append the `2026-09-24 #4:` line.
 3. `crates/core/src/extract.rs`: remove the unused `end` parameter and its callers.
+
+## Cycle 2 — 2026-09-24, commit da53673
+`verify.sh` exit 0 (fmt, clippy -D warnings, 57 tests incl. proptest, budgets).
+
+Required change 1 satisfied (`docs/architecture.md:40-48`, extract bullet = shipped
+interface, 603 words). Required change 2 satisfied (`docs/decisions.md:13`). Required
+change 3 satisfied (`extract.rs:322-338`, `anchored` takes only `start`; call sites
+updated; behaviour-neutral). Regression sweep clean: tests and fixtures byte-identical
+since cycle 1; pub surface exactly the spec delta; no dependency or `Cargo.toml` change.
+
+VERDICT: APPROVE
