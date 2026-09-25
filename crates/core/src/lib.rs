@@ -2,4 +2,5 @@
 //! Binaries (`server`, `app`) only map I/O to calls into this crate.
 
 pub mod bill;
+pub mod email;
 pub mod store;

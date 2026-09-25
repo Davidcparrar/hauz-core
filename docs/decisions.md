@@ -9,3 +9,4 @@
 - 2026-09-21 #0: allowed deps += sqlx, mail-parser, pdf-extract, serde, serde_json, sha2, time — pinned in the workspace so implementers only add `{ workspace = true }` in their crate
 - 2026-09-21 #1: `Bill` is built via `TryFrom<BillDraft>` (plain struct, pub fields) with `#[serde(try_from, into)]` over a many-argument constructor — because one entry point enforces the status/field invariants for both code and JSON
 - 2026-09-23 #2: `BillStore` is an async trait returning boxed `Send` futures (`dyn`-compatible, no `async-trait` crate) over generics or a sync trait — because sqlx is async, `ingest` and the server want `&dyn BillStore` so the in-memory fake can stand in, and it adds no dependency
+- 2026-09-24 #3: `MimeType` is a normalised `type/subtype` newtype over an enum, and `Envelope`/`Document` are pub-field records over accessor types — because the mime set is open (`extract` owns what a mime means) and downstream modules' tests build envelopes by hand

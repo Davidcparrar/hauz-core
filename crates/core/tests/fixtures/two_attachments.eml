@@ -1,0 +1,36 @@
+From: alice@example.com
+Subject: Two attachments
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="o1"
+
+--o1
+Content-Type: text/html
+
+<p>Only html body</p>
+
+--o1
+Content-Type: multipart/mixed; boundary="o2"
+
+--o2
+Content-Type: application/pdf; name="doc.pdf"
+Content-Disposition: attachment; filename="doc.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZQ==
+
+--o2
+Content-Type: text/csv
+Content-Disposition: attachment; filename="data.csv"
+Content-Transfer-Encoding: quoted-printable
+
+a,b,c=0D=0A1,2,3
+--o2--
+
+--o1
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+
+UE5HREFUQQ==
+
+--o1--
