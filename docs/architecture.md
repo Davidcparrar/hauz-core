@@ -37,10 +37,15 @@ message), analytics, frontend, mobile.
   { mime: MimeType, filename, bytes }>` — one per attachment across nested multiparts,
   decoded; a `message/rfc822` part is one `Document`, not recursed. `MimeType` is a
   lowercase `type/subtype` newtype. `Error { Malformed, MissingSender, InvalidMimeType }`.
-- `extract` — owns "document ⇒ candidate fields"; interface: `trait Extractor`,
-  `Extraction` (partial fields + confidence + source span), `merge(Vec<Extraction>)`.
-  First impl is heuristic text/HTML; PDF text and an LLM-backed impl slot in behind the
-  same trait.
+- `extract` — owns "envelope ⇒ candidate fields"; interface: `trait Extractor: Send +
+  Sync { fn extract(&self, &Envelope) -> Result<Extraction, Error> }` (`dyn`-safe),
+  `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
+  `Option<Field<T>>`), `Field<T> { value, confidence: Confidence (0..=100), span: Span
+  { source: Source { Text, Html, Document(i) }, start, end } }`, `merge(Vec<Extraction>)`
+  (highest confidence per field; ties by structural value order, then span — so it is
+  order-insensitive and idempotent), `TextExtractor` (heuristic scanner over `text` and
+  tag-stripped `html`: anchored amounts/dates, sender-domain vendor; no regex). PDF text
+  and an LLM-backed impl slot in behind the same trait, reading `documents` themselves.
 - `store` — owns persistence; interface: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
   `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via boxed futures,
   `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
