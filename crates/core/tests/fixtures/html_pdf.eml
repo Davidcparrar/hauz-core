@@ -1,0 +1,29 @@
+From: alice@example.com
+Subject: Invoice
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b1"
+
+--b1
+Content-Type: multipart/alternative; boundary="b2"
+
+--b2
+Content-Type: text/plain
+
+Plain body
+
+--b2
+Content-Type: text/html
+
+<p>HTML body</p>
+
+--b2--
+
+--b1
+Content-Type: application/pdf; name="invoice.pdf"
+Content-Disposition: attachment; filename="invoice.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZQ==
+
+--b1--
