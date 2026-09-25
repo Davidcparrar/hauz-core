@@ -31,8 +31,12 @@ message), analytics, frontend, mobile.
 - `bill` — owns the domain vocabulary; interface: `Bill`, `BillDraft`, `BillId`, `Money`
   (minor units + `Currency`), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
   Parse, don't validate: fallible constructors; `Bill` only via `TryFrom<BillDraft>`, serde too.
-- `email` — owns MIME decoding; interface: `Envelope::parse(&[u8])`, yielding subject,
-  sender, date, text/HTML body and `Vec<Document>` (mime type, filename, bytes).
+- `email` — owns MIME decoding (mail-parser); interface: `Envelope::parse(&[u8]) ->
+  Result<Envelope, Error>`. `Envelope` and `Document` are pub-field records: `subject`,
+  `sender` (addr-spec, required), `date` (UTC), `text`, `html`, `documents: Vec<Document
+  { mime: MimeType, filename, bytes }>` — one per attachment across nested multiparts,
+  decoded; a `message/rfc822` part is one `Document`, not recursed. `MimeType` is a
+  lowercase `type/subtype` newtype. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "document ⇒ candidate fields"; interface: `trait Extractor`,
   `Extraction` (partial fields + confidence + source span), `merge(Vec<Extraction>)`.
   First impl is heuristic text/HTML; PDF text and an LLM-backed impl slot in behind the
