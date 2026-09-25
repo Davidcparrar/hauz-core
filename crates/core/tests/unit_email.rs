@@ -30,8 +30,8 @@ fn ac1_single_part_text_plain() -> Result<()> {
 fn ac2_multipart_alternative_plus_pdf_attachment() -> Result<()> {
     let envelope = Envelope::parse(HTML_PDF)?;
 
-    assert!(envelope.text.is_some());
-    assert!(envelope.html.is_some());
+    assert_eq!(envelope.text.as_deref(), Some("Plain body\n"));
+    assert_eq!(envelope.html.as_deref(), Some("<p>HTML body</p>\n"));
     let [doc] = envelope.documents.as_slice() else {
         return Err("expected exactly one document".into());
     };
@@ -45,8 +45,8 @@ fn ac2_multipart_alternative_plus_pdf_attachment() -> Result<()> {
 fn ac3_html_only_body_with_nested_and_sibling_attachments() -> Result<()> {
     let envelope = Envelope::parse(TWO_ATTACHMENTS)?;
 
-    assert!(envelope.html.is_some());
-    assert!(envelope.text.is_some());
+    assert_eq!(envelope.html.as_deref(), Some("<p>Only html body</p>\n"));
+    assert_eq!(envelope.text.as_deref(), Some("Only html body\n"));
     let [pdf, csv, png] = envelope.documents.as_slice() else {
         return Err("expected exactly three documents".into());
     };
