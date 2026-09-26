@@ -1,0 +1,3 @@
+Invoice date: Sep 24, 2026
+Amount due: $1,234.56
+Due date: October 15, 2026
