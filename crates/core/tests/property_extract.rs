@@ -1,8 +1,10 @@
 //! [property] tests for the `extract` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
+use std::collections::BTreeSet;
+
 use hauz_core::bill::{BillingPeriod, Currency, Money, Vendor};
-use hauz_core::extract::{Confidence, Extraction, Field, Source, Span, merge};
+use hauz_core::extract::{Confidence, Extraction, Field, Note, Source, Span, merge};
 use proptest::prelude::*;
 
 fn arb_currency() -> impl Strategy<Value = Currency> {
@@ -61,6 +63,14 @@ where
     })
 }
 
+fn arb_note() -> impl Strategy<Value = Note> {
+    (0usize..5).prop_map(|document| Note::NoTextLayer { document })
+}
+
+fn arb_notes() -> impl Strategy<Value = BTreeSet<Note>> {
+    proptest::collection::btree_set(arb_note(), 0..3)
+}
+
 fn arb_extraction() -> impl Strategy<Value = Extraction> {
     (
         proptest::option::of(arb_field(arb_money())),
@@ -68,13 +78,15 @@ fn arb_extraction() -> impl Strategy<Value = Extraction> {
         proptest::option::of(arb_field(arb_date())),
         proptest::option::of(arb_field(arb_billing_period())),
         proptest::option::of(arb_field(arb_vendor())),
+        arb_notes(),
     )
-        .prop_map(|(amount, issued, due, period, vendor)| Extraction {
+        .prop_map(|(amount, issued, due, period, vendor, notes)| Extraction {
             amount,
             issued,
             due,
             period,
             vendor,
+            notes,
         })
 }
 

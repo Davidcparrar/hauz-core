@@ -41,11 +41,15 @@ message), analytics, frontend, mobile.
   Sync { fn extract(&self, &Envelope) -> Result<Extraction, Error> }` (`dyn`-safe),
   `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
   `Option<Field<T>>`), `Field<T> { value, confidence: Confidence (0..=100), span: Span
-  { source: Source { Text, Html, Document(i) }, start, end } }`, `merge(Vec<Extraction>)`
-  (highest confidence per field; ties by structural value order, then span — so it is
+  { source: Source { Text, Html, Document(i) }, start, end } }`, `notes: BTreeSet<Note
+  { NoTextLayer { document } }>`), `merge(Vec<Extraction>)` (highest confidence per
+  field, notes unioned; ties by structural value order, then span — so it is
   order-insensitive and idempotent), `TextExtractor` (heuristic scanner over `text` and
-  tag-stripped `html`: anchored amounts/dates, sender-domain vendor; no regex). PDF text
-  and an LLM-backed impl slot in behind the same trait, reading `documents` themselves.
+  tag-stripped `html`: anchored amounts/dates, sender-domain vendor; no regex),
+  `PdfTextExtractor` (same scanner over the text layer of each `application/pdf`
+  document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
+  `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`). Callers run
+  several extractors and `merge`; an LLM-backed impl slots in behind the same trait.
 - `store` — owns persistence; interface: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
   `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via boxed futures,
   `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
@@ -69,5 +73,6 @@ the application code never talks to S3. Turso stays possible later behind `BillS
 - Extraction quality on real bills is unknown until we have a corpus; the heuristic
   extractor is a baseline.
 - Scanned/image-only PDFs need OCR or a vision model — deferred until a real sample
-  demands it.
+  demands it; today they surface as a `NoTextLayer` note. A PDF with a slightly wrong
+  xref also reads as empty (pdf-extract loses data silently rather than erroring).
 - Single-writer SQLite suits one ingest service; a second writer means Turso or Postgres.
