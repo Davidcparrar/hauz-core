@@ -7,6 +7,7 @@
 //! LLM-backed implementation slot in later behind the same trait.
 
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
 
 use crate::bill::{BillingPeriod, Currency, Money, Vendor};
 use crate::email::Envelope;
@@ -18,6 +19,29 @@ pub enum Error {
     /// A confidence value was outside `0..=100`.
     #[error("confidence must be 0..=100, got {0}")]
     InvalidConfidence(u8),
+    /// The PDF attachment at `document` could not be read: either `pdf-extract` returned an
+    /// error, or it panicked (caught via `catch_unwind`). `pdf-extract`'s error type is
+    /// neither `Clone` nor `Eq`, so only its rendered message survives in `reason`.
+    #[error("pdf attachment {document}: {reason}")]
+    Pdf {
+        /// The index into `Envelope::documents` of the failing attachment.
+        document: usize,
+        /// The error's or panic's message.
+        reason: String,
+    },
+}
+
+/// A caveat attached to an [`Extraction`] alongside its fields: something the extractor is
+/// honest about not knowing, rather than silently omitting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum Note {
+    /// The PDF attachment at `document` has no text layer (e.g. a scanned image): its text
+    /// extraction trimmed to empty.
+    NoTextLayer {
+        /// The index into `Envelope::documents` of the attachment with no text layer.
+        document: usize,
+    },
 }
 
 /// A validated confidence score in `0..=100`.
@@ -91,6 +115,8 @@ pub struct Extraction {
     pub period: Option<Field<BillingPeriod>>,
     /// The vendor, when found.
     pub vendor: Option<Field<Vendor>>,
+    /// Caveats about this extraction (e.g. a PDF attachment with no text layer).
+    pub notes: BTreeSet<Note>,
 }
 
 /// Something that can turn an [`Envelope`] into a partial [`Extraction`]. Implementations may
@@ -129,6 +155,7 @@ pub fn merge(extractions: Vec<Extraction>) -> Extraction {
         merge_field(&mut result.vendor, extraction.vendor, |vendor: &Vendor| {
             vendor.name().to_string()
         });
+        result.notes.extend(extraction.notes);
     }
     result
 }
@@ -226,6 +253,7 @@ fn scan(text: &str, source: Source) -> Result<Extraction, Error> {
         due,
         period: None,
         vendor: None,
+        notes: BTreeSet::new(),
     })
 }
 
@@ -389,6 +417,100 @@ fn vendor_of(sender: &str) -> Result<Option<Field<Vendor>>, Error> {
             end: 0,
         },
     }))
+}
+
+// ---------------------------------------------------------------------------------------
+// PdfTextExtractor: scans the text layer of `application/pdf` attachments.
+// ---------------------------------------------------------------------------------------
+
+const PDF_MIME: &str = "application/pdf";
+
+/// Extracts amount and date candidates from `application/pdf` attachments' text layer,
+/// using the same scanner as [`TextExtractor`]. Never sets `period` or `vendor` (PDF text
+/// alone carries neither); an image-only PDF is reported honestly via
+/// [`Note::NoTextLayer`] rather than silently dropped. One unreadable PDF fails the whole
+/// call: partial results are a non-goal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PdfTextExtractor;
+
+impl Extractor for PdfTextExtractor {
+    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error> {
+        let mut parts = Vec::new();
+        for (index, document) in envelope.documents.iter().enumerate() {
+            if document.mime.as_str() != PDF_MIME {
+                continue;
+            }
+            match Self::text_layer(&document.bytes) {
+                Ok(Some(text)) => parts.push(scan(&text, Source::Document(index))?),
+                Ok(None) => {
+                    let mut note_only = Extraction::default();
+                    note_only
+                        .notes
+                        .insert(Note::NoTextLayer { document: index });
+                    parts.push(note_only);
+                }
+                Err(Error::Pdf { reason, .. }) => {
+                    return Err(Error::Pdf {
+                        document: index,
+                        reason,
+                    });
+                }
+                Err(err @ Error::InvalidConfidence(_)) => return Err(err),
+            }
+        }
+        Ok(merge(parts))
+    }
+}
+
+impl PdfTextExtractor {
+    /// Extracts the text layer of a PDF's raw bytes, or `None` when the PDF has no text
+    /// layer at all (e.g. a scanned image): `pdf_extract`'s output, trimmed, tested for
+    /// emptiness.
+    ///
+    /// `pdf-extract` can panic on some well-formed inputs (a content stream that selects a
+    /// font missing from `/Resources`); the call runs inside `catch_unwind` so no panic ever
+    /// escapes this function.
+    ///
+    /// # Errors
+    /// Returns [`Error::Pdf`] (`document` is always `0`; callers that know which attachment
+    /// this is fill in the real index) when `pdf-extract` returns an error or panics.
+    pub fn text_layer(bytes: &[u8]) -> Result<Option<String>, Error> {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_extract::extract_text_from_mem(bytes)
+        }));
+        let text = match outcome {
+            Ok(Ok(text)) => text,
+            Ok(Err(err)) => {
+                return Err(Error::Pdf {
+                    document: 0,
+                    reason: err.to_string(),
+                });
+            }
+            Err(panic_payload) => {
+                return Err(Error::Pdf {
+                    document: 0,
+                    reason: panic_message(panic_payload.as_ref()),
+                });
+            }
+        };
+        if text.trim().is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(text))
+        }
+    }
+}
+
+/// Renders a caught panic payload as a string: the literal message for `panic!("...")`
+/// (`&str`) or `panic!("{}", ..)` (`String`), else a fixed fallback.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "pdf-extract panicked with a non-string payload".to_string()
+    }
 }
 
 // ---------------------------------------------------------------------------------------

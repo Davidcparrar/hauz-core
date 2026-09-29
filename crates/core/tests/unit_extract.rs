@@ -1,10 +1,15 @@
 //! [unit] tests for the `extract` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
+mod common;
+
+use std::collections::BTreeSet;
+
 use hauz_core::bill::{Currency, Money, Vendor};
-use hauz_core::email::Envelope;
+use hauz_core::email::{Document, Envelope, MimeType};
 use hauz_core::extract::{
-    Confidence, Error, Extraction, Extractor, Field, Source, Span, TextExtractor, merge,
+    Confidence, Error, Extraction, Extractor, Field, Note, PdfTextExtractor, Source, Span,
+    TextExtractor, merge,
 };
 use time::macros::date;
 
@@ -170,6 +175,7 @@ fn ac8_merge_keeps_higher_confidence_and_union_of_fields() -> Result<()> {
         }),
         period: None,
         vendor: None,
+        notes: BTreeSet::new(),
     };
     let high = Extraction {
         amount: Some(Field {
@@ -181,6 +187,7 @@ fn ac8_merge_keeps_higher_confidence_and_union_of_fields() -> Result<()> {
         due: None,
         period: None,
         vendor: None,
+        notes: BTreeSet::new(),
     };
 
     let merged = merge(vec![low, high]);
@@ -194,4 +201,171 @@ fn ac8_merge_keeps_higher_confidence_and_union_of_fields() -> Result<()> {
     );
     assert_eq!(merged.issued, None);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------
+// PdfTextExtractor
+// ---------------------------------------------------------------------------------------
+
+const PDF: &str = "application/pdf";
+const CSV: &str = "text/csv";
+
+fn pdf_document(bytes: Vec<u8>) -> Result<Document> {
+    Ok(Document {
+        mime: MimeType::new(PDF)?,
+        filename: None,
+        bytes,
+    })
+}
+
+fn other_document(bytes: Vec<u8>) -> Result<Document> {
+    Ok(Document {
+        mime: MimeType::new(CSV)?,
+        filename: None,
+        bytes,
+    })
+}
+
+/// An otherwise-empty envelope with just a sender and a list of documents.
+fn envelope_with_documents(sender: &str, documents: Vec<Document>) -> Envelope {
+    Envelope {
+        subject: None,
+        sender: sender.to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents,
+    }
+}
+
+#[test]
+fn ac1_pdf_attachment_anchored_fields_with_document_span() -> Result<()> {
+    let lines = ["Total: 1,234.56 EUR", "Due date: 15/10/2026"];
+    let pdf_bytes = common::minimal_pdf(&lines);
+    let text = PdfTextExtractor::text_layer(&pdf_bytes)?.ok_or("expected a text layer")?;
+
+    let envelope = envelope_with_documents("billing@example.com", vec![pdf_document(pdf_bytes)?]);
+    let extraction = PdfTextExtractor.extract(&envelope)?;
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(123_456, Currency::new("EUR")?));
+    assert_eq!(amount.span.source, Source::Document(0));
+    assert_eq!(&text[amount.span.start..amount.span.end], "1,234.56 EUR");
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 10 - 15));
+    assert_eq!(due.span.source, Source::Document(0));
+    assert_eq!(&text[due.span.start..due.span.end], "15/10/2026");
+
+    assert!(extraction.notes.is_empty());
+    assert_eq!(extraction.vendor, None);
+    Ok(())
+}
+
+#[test]
+fn ac2_image_only_pdf_has_no_text_layer_note() -> Result<()> {
+    let pdf_bytes = common::image_only_pdf();
+    assert_eq!(PdfTextExtractor::text_layer(&pdf_bytes)?, None);
+
+    let envelope = envelope_with_documents("billing@example.com", vec![pdf_document(pdf_bytes)?]);
+    let extraction = PdfTextExtractor.extract(&envelope)?;
+
+    assert_eq!(extraction.amount, None);
+    assert_eq!(extraction.issued, None);
+    assert_eq!(extraction.due, None);
+    assert_eq!(extraction.period, None);
+    assert_eq!(extraction.vendor, None);
+    assert_eq!(
+        extraction.notes,
+        BTreeSet::from([Note::NoTextLayer { document: 0 }])
+    );
+    Ok(())
+}
+
+#[test]
+fn ac3_corrupt_pdf_inputs_fail_without_panicking() -> Result<()> {
+    let lines = ["Total: 1,234.56 EUR", "Due date: 15/10/2026"];
+    let full_pdf = common::minimal_pdf(&lines);
+    let half_len = full_pdf.len() / 2;
+    let truncated = full_pdf
+        .get(..half_len)
+        .ok_or("expected a prefix")?
+        .to_vec();
+
+    let cases: Vec<Vec<u8>> = vec![
+        b"%PDF-1.4 fake".to_vec(),
+        Vec::new(),
+        truncated,
+        common::pdf_missing_font(&lines),
+    ];
+
+    for bytes in cases {
+        let envelope = envelope_with_documents("billing@example.com", vec![pdf_document(bytes)?]);
+        let result = PdfTextExtractor.extract(&envelope);
+        assert!(matches!(result, Err(Error::Pdf { document: 0, .. })));
+    }
+    Ok(())
+}
+
+#[test]
+fn ac4_mixed_documents_ignore_csv_note_image_scan_text() -> Result<()> {
+    let lines = ["Total: 1,234.56 EUR", "Due date: 15/10/2026"];
+    let documents = vec![
+        other_document(b"a,b,c".to_vec())?,
+        pdf_document(common::image_only_pdf())?,
+        pdf_document(common::minimal_pdf(&lines))?,
+    ];
+    let envelope = envelope_with_documents("billing@example.com", documents);
+    let extraction = PdfTextExtractor.extract(&envelope)?;
+
+    assert_eq!(
+        extraction.notes,
+        BTreeSet::from([Note::NoTextLayer { document: 1 }])
+    );
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(123_456, Currency::new("EUR")?));
+    assert_eq!(amount.span.source, Source::Document(2));
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 10 - 15));
+    assert_eq!(due.span.source, Source::Document(2));
+    Ok(())
+}
+
+#[test]
+fn ac5_empty_or_non_pdf_documents_yield_default_extraction() -> Result<()> {
+    let empty = envelope_with_documents("billing@example.com", Vec::new());
+    assert_eq!(PdfTextExtractor.extract(&empty)?, Extraction::default());
+
+    let non_pdf = envelope_with_documents(
+        "billing@example.com",
+        vec![other_document(b"a,b,c".to_vec())?],
+    );
+    assert_eq!(PdfTextExtractor.extract(&non_pdf)?, Extraction::default());
+    Ok(())
+}
+
+#[test]
+fn ac6_merge_unions_notes() {
+    let a = Extraction {
+        notes: BTreeSet::from([Note::NoTextLayer { document: 0 }]),
+        ..Extraction::default()
+    };
+    let a_and_b = Extraction {
+        notes: BTreeSet::from([
+            Note::NoTextLayer { document: 0 },
+            Note::NoTextLayer { document: 1 },
+        ]),
+        ..Extraction::default()
+    };
+
+    let merged = merge(vec![a, a_and_b]);
+    assert_eq!(
+        merged.notes,
+        BTreeSet::from([
+            Note::NoTextLayer { document: 0 },
+            Note::NoTextLayer { document: 1 },
+        ])
+    );
 }

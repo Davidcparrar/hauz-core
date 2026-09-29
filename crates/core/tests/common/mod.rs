@@ -160,3 +160,115 @@ pub(crate) async fn ac6_bare_needs_review_bill_round_trips(store: &dyn BillStore
     assert_eq!(store.get(bill.id()).await?, Some(bill));
     Ok(())
 }
+
+// -----------------------------------------------------------------------------------------
+// PDF fixture builders for `extract`'s `PdfTextExtractor` tests (std only, no dependency on
+// `pdf-extract` or any PDF library): a minimal PDF-1.4, single page, base-14 Helvetica `/F1`,
+// one `Tj` per line, with a hand-computed xref table so the file is byte-exact and valid.
+// -----------------------------------------------------------------------------------------
+
+/// Escapes `(`, `)` and `\` for use inside a PDF literal string `(...)`.
+fn pdf_escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '(' | ')' | '\\' => escaped.push('\\'),
+            _ => {}
+        }
+        escaped.push(c);
+    }
+    escaped
+}
+
+/// The page content stream: `Tj` for each of `lines`, 16pt line spacing, top-down.
+fn pdf_content_stream(lines: &[&str]) -> Vec<u8> {
+    let mut stream = String::from("BT /F1 12 Tf 72 720 Td ");
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            stream.push_str("0 -16 Td ");
+        }
+        stream.push('(');
+        stream.push_str(&pdf_escape(line));
+        stream.push_str(") Tj ");
+    }
+    stream.push_str("ET");
+    stream.into_bytes()
+}
+
+/// Assembles a well-formed single-page PDF-1.4 from a page `/Resources` dictionary body and a
+/// content stream, laying out objects `1..=4` (catalog, pages, page, contents) plus any
+/// `extra_objects` (e.g. a font or image XObject), with a correct xref table.
+fn pdf_from_objects(resources: &str, content: &[u8], extra_objects: Vec<Vec<u8>>) -> Vec<u8> {
+    let mut objects: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources {resources} /Contents 4 0 R >>"
+        )
+        .into_bytes(),
+    ];
+    let mut contents_object = format!("<< /Length {} >>\nstream\n", content.len()).into_bytes();
+    contents_object.extend_from_slice(content);
+    contents_object.extend_from_slice(b"\nendstream");
+    objects.push(contents_object);
+    objects.extend(extra_objects);
+
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        pdf.extend_from_slice(object);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    let xref_offset = pdf.len();
+    let entry_count = objects.len() + 1;
+    pdf.extend_from_slice(format!("xref\n0 {entry_count}\n0000000000 65535 f \n").as_bytes());
+    for offset in &offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size {entry_count} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF")
+            .as_bytes(),
+    );
+    pdf
+}
+
+/// A single Helvetica base-14 font object (`/F1`), referenced by object number 5.
+fn helvetica_font_object() -> Vec<u8> {
+    b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec()
+}
+
+/// A valid, minimal single-page PDF-1.4: one `Tj` per line of `lines`, base-14 Helvetica
+/// `/F1`, top-down at 16pt line spacing. Its text layer extracts to the lines joined by `\n`.
+pub(crate) fn minimal_pdf(lines: &[&str]) -> Vec<u8> {
+    let content = pdf_content_stream(lines);
+    pdf_from_objects(
+        "<< /Font << /F1 5 0 R >> >>",
+        &content,
+        vec![helvetica_font_object()],
+    )
+}
+
+/// A valid PDF whose page draws a tiny image XObject and has no text at all: `pdf-extract`
+/// returns `Ok("")` for it (no text layer, not an error).
+pub(crate) fn image_only_pdf() -> Vec<u8> {
+    let mut image_object =
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n"
+            .to_vec();
+    image_object.push(0x80);
+    image_object.extend_from_slice(b"\nendstream");
+    pdf_from_objects(
+        "<< /Font << /F1 5 0 R >> /XObject << /Im1 6 0 R >> >>",
+        b"q 100 0 0 100 0 0 cm /Im1 Do Q",
+        vec![helvetica_font_object(), image_object],
+    )
+}
+
+/// The same page and content stream as [`minimal_pdf`], except `/Resources` omits `/Font`
+/// entirely while the content stream still selects `/F1 12 Tf`: `pdf-extract` panics looking
+/// up a font it was never told about.
+pub(crate) fn pdf_missing_font(lines: &[&str]) -> Vec<u8> {
+    let content = pdf_content_stream(lines);
+    pdf_from_objects("<< >>", &content, Vec::new())
+}
