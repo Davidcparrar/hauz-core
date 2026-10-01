@@ -55,8 +55,13 @@ message), analytics, frontend, mobile.
   `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
   other modules' tests.
 - `ingest` — owns the pipeline; interface: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
-  st: &dyn BillStore) -> Result<Outcome>`. Hashes the raw message for idempotency,
-  parses, extracts, decides `Status`, persists.
+  st: &dyn BillStore) -> Result<Outcome, Error>` (`Send` future), `Outcome { Created(BillId),
+  Duplicate(BillId) }`, `raw_hash(&[u8]) -> RawHash` (SHA-256), `EXTRACTED_MIN_CONFIDENCE`
+  (50), `Error { Email, Extract, Store, Bill }` (`#[from]` each). Order: hash →
+  `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = lowercase
+  hex of the hash. `Status::Extracted` iff amount (confidence ≥ 50), vendor and period are
+  all present, else `NeedsReview` keeping every present field. A parse or extractor `Err`
+  stores nothing; `issued` and `notes` are not persisted.
 
 ## Entry points
 - server: `pub fn router(state: AppState) -> axum::Router` (lib) + `main.rs` binds and
