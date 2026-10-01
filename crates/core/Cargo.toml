@@ -16,6 +16,7 @@ time = { workspace = true }
 sqlx = { workspace = true }
 mail-parser = { workspace = true }
 pdf-extract = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

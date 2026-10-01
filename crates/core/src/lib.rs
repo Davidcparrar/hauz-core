@@ -4,4 +4,5 @@
 pub mod bill;
 pub mod email;
 pub mod extract;
+pub mod ingest;
 pub mod store;
