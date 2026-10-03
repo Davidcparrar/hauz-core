@@ -4,7 +4,10 @@
 use std::collections::BTreeSet;
 
 use hauz_core::bill::{BillingPeriod, Currency, Money, Vendor};
-use hauz_core::extract::{Confidence, Extraction, Field, Note, Source, Span, merge};
+use hauz_core::email::Envelope;
+use hauz_core::extract::{
+    Confidence, Error, Escalate, Extraction, Extractor, Field, Note, Source, Span, merge,
+};
 use proptest::prelude::*;
 
 fn arb_currency() -> impl Strategy<Value = Currency> {
@@ -114,5 +117,50 @@ proptest! {
             .chain(extractions.iter().cloned())
             .collect();
         prop_assert_eq!(merge(doubled), merge(extractions));
+    }
+}
+
+/// Always returns a clone of the fixed extraction it was built with, ignoring the envelope.
+struct Fixed(Extraction);
+
+impl Extractor for Fixed {
+    fn extract<'a>(
+        &'a self,
+        _envelope: &'a Envelope,
+    ) -> hauz_core::BoxFuture<'a, std::result::Result<Extraction, Error>> {
+        let extraction = self.0.clone();
+        Box::pin(async move { Ok(extraction) })
+    }
+}
+
+/// An otherwise-empty envelope; `Fixed` ignores it entirely.
+fn envelope() -> Envelope {
+    Envelope {
+        subject: None,
+        sender: "billing@example.com".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents: Vec::new(),
+    }
+}
+
+proptest! {
+    /// AC6: `Escalate(Fixed(a), Fixed(b), t)` returns `a` when `a.is_complete(t)`, else
+    /// `merge([a, b])`.
+    #[test]
+    fn ac6_escalate_returns_primary_when_complete_else_merge(
+        a in arb_extraction(),
+        b in arb_extraction(),
+        t in any::<u8>(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let envelope = envelope();
+        let escalate = Escalate::new(Box::new(Fixed(a.clone())), Box::new(Fixed(b.clone())), t);
+
+        let result = rt.block_on(escalate.extract(&envelope)).expect("escalate");
+        let expected = if a.is_complete(t) { a } else { merge(vec![a, b]) };
+
+        prop_assert_eq!(result, expected);
     }
 }

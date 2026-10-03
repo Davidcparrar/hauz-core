@@ -104,8 +104,11 @@ fn arb_extraction() -> impl Strategy<Value = Extraction> {
 struct Fixed(Extraction);
 
 impl Extractor for Fixed {
-    fn extract(&self, _envelope: &Envelope) -> std::result::Result<Extraction, ExtractError> {
-        Ok(self.0.clone())
+    fn extract<'a>(
+        &'a self,
+        _envelope: &'a Envelope,
+    ) -> hauz_core::BoxFuture<'a, std::result::Result<Extraction, ExtractError>> {
+        Box::pin(async move { Ok(self.0.clone()) })
     }
 }
 

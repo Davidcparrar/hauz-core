@@ -3,9 +3,7 @@
 //! identical semantics. Insert is idempotent on the raw-message hash the caller computes: the
 //! same email twice yields one row and the same id.
 
-use std::future::Future;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::{Mutex, PoisonError};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -68,8 +66,9 @@ pub enum InsertOutcome {
     Duplicate(BillId),
 }
 
-/// A future boxed for a dyn-compatible async trait: no `async-trait`, no `unsafe`.
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+/// Moved to the crate root as [`crate::BoxFuture`]; re-exported here so existing paths
+/// (`store::BoxFuture`) keep compiling.
+pub use crate::BoxFuture;
 
 /// Persistence for `Bill`s, keyed by id and by the raw-message hash that produced them.
 /// Dyn-compatible: callers hold `&dyn BillStore` at the system edge.

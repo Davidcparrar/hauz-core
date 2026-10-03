@@ -79,14 +79,10 @@ pub async fn ingest(raw: &[u8], ex: &dyn Extractor, st: &dyn BillStore) -> Resul
     }
 
     let envelope = Envelope::parse(raw)?;
-    let extraction = ex.extract(&envelope)?;
+    let extraction = ex.extract(&envelope).await?;
 
     let id = BillId::new(&to_hex(hash.as_bytes()))?;
-    let amount_ok = extraction
-        .amount
-        .as_ref()
-        .is_some_and(|field| field.confidence.get() >= EXTRACTED_MIN_CONFIDENCE);
-    let status = if amount_ok && extraction.vendor.is_some() && extraction.period.is_some() {
+    let status = if extraction.is_complete(EXTRACTED_MIN_CONFIDENCE) {
         Status::Extracted
     } else {
         Status::NeedsReview

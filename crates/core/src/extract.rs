@@ -9,6 +9,7 @@
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
+use crate::BoxFuture;
 use crate::bill::{BillingPeriod, Currency, Money, Vendor};
 use crate::email::Envelope;
 
@@ -119,16 +120,33 @@ pub struct Extraction {
     pub notes: BTreeSet<Note>,
 }
 
+impl Extraction {
+    /// True iff this extraction is complete enough to trust without review: the amount is
+    /// present at `confidence >= min_confidence`, and both vendor and period are present.
+    /// `ingest` calls this with [`crate::ingest::EXTRACTED_MIN_CONFIDENCE`]; [`Escalate`]
+    /// calls it with its own threshold.
+    #[must_use]
+    pub fn is_complete(&self, min_confidence: u8) -> bool {
+        let amount_ok = self
+            .amount
+            .as_ref()
+            .is_some_and(|field| field.confidence.get() >= min_confidence);
+        amount_ok && self.vendor.is_some() && self.period.is_some()
+    }
+}
+
 /// Something that can turn an [`Envelope`] into a partial [`Extraction`]. Implementations may
 /// read text, HTML, or attachments; a heuristic pass, PDF text, and an LLM-backed pass all
-/// implement this trait so callers can run several and [`merge`] the results.
+/// implement this trait so callers can run several and [`merge`] the results. `extract`
+/// returns a boxed `Send` future (decision #2: no `async-trait`, `dyn`-safe) so a
+/// network-bound implementation (e.g. an LLM-backed one) slots in behind the same trait.
 pub trait Extractor: Send + Sync {
     /// Extracts candidate fields from `envelope`.
     ///
     /// # Errors
     /// Returns [`Error`] when the implementation cannot build a valid field (e.g. an internal
     /// confidence computation is out of range).
-    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error>;
+    fn extract<'a>(&'a self, envelope: &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>>;
 }
 
 /// Combines several extractions into one, keeping the highest-confidence value for each
@@ -180,14 +198,69 @@ impl std::fmt::Debug for Chain {
 }
 
 impl Extractor for Chain {
-    /// Runs each extractor in order, stopping at (and returning) the first `Err`; otherwise
-    /// returns `merge` of every extractor's `Extraction`.
-    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error> {
-        let mut results = Vec::with_capacity(self.0.len());
-        for extractor in &self.0 {
-            results.push(extractor.extract(envelope)?);
+    /// Runs each extractor in order (sequentially, no parallelism), stopping at (and
+    /// returning) the first `Err`; otherwise returns `merge` of every extractor's
+    /// `Extraction`.
+    fn extract<'a>(&'a self, envelope: &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> {
+        Box::pin(async move {
+            let mut results = Vec::with_capacity(self.0.len());
+            for extractor in &self.0 {
+                results.push(extractor.extract(envelope).await?);
+            }
+            Ok(merge(results))
+        })
+    }
+}
+
+/// Runs an expensive `secondary` extractor only when a cheap `primary` leaves the bill short
+/// of complete. Never decides [`crate::bill::Status`] itself (`ingest` still does); returns
+/// `merge([primary, secondary])`, never the secondary alone, so the primary's
+/// higher-confidence fields and notes survive.
+pub struct Escalate {
+    primary: Box<dyn Extractor>,
+    secondary: Box<dyn Extractor>,
+    min_confidence: u8,
+}
+
+impl Escalate {
+    /// Wraps `primary` and `secondary`; `secondary` runs only when `primary`'s extraction is
+    /// not [`Extraction::is_complete`] at `min_confidence`. A `min_confidence` above 100 means
+    /// "always escalate" (no amount confidence can ever clear it).
+    #[must_use]
+    pub fn new(
+        primary: Box<dyn Extractor>,
+        secondary: Box<dyn Extractor>,
+        min_confidence: u8,
+    ) -> Self {
+        Self {
+            primary,
+            secondary,
+            min_confidence,
         }
-        Ok(merge(results))
+    }
+}
+
+impl std::fmt::Debug for Escalate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Escalate")
+            .field("min_confidence", &self.min_confidence)
+            .finish()
+    }
+}
+
+impl Extractor for Escalate {
+    /// Runs `primary`; returns its result unchanged when complete (without ever calling
+    /// `secondary`). Otherwise runs `secondary` and returns `merge([primary, secondary])`. An
+    /// `Err` from either propagates immediately.
+    fn extract<'a>(&'a self, envelope: &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> {
+        Box::pin(async move {
+            let primary = self.primary.extract(envelope).await?;
+            if primary.is_complete(self.min_confidence) {
+                return Ok(primary);
+            }
+            let secondary = self.secondary.extract(envelope).await?;
+            Ok(merge(vec![primary, secondary]))
+        })
     }
 }
 
@@ -252,8 +325,8 @@ const ANCHOR_WINDOW: usize = 40;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextExtractor;
 
-impl Extractor for TextExtractor {
-    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error> {
+impl TextExtractor {
+    fn extract_sync(&self, envelope: &Envelope) -> Result<Extraction, Error> {
         let mut parts = Vec::new();
         if let Some(text) = envelope.text.as_deref() {
             parts.push(scan(text, Source::Text)?);
@@ -265,6 +338,12 @@ impl Extractor for TextExtractor {
         let mut result = merge(parts);
         result.vendor = vendor_of(&envelope.sender)?;
         Ok(result)
+    }
+}
+
+impl Extractor for TextExtractor {
+    fn extract<'a>(&'a self, envelope: &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> {
+        Box::pin(async move { self.extract_sync(envelope) })
     }
 }
 
@@ -464,8 +543,8 @@ const PDF_MIME: &str = "application/pdf";
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdfTextExtractor;
 
-impl Extractor for PdfTextExtractor {
-    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error> {
+impl PdfTextExtractor {
+    fn extract_sync(&self, envelope: &Envelope) -> Result<Extraction, Error> {
         let mut parts = Vec::new();
         for (index, document) in envelope.documents.iter().enumerate() {
             if document.mime.as_str() != PDF_MIME {
@@ -490,6 +569,12 @@ impl Extractor for PdfTextExtractor {
             }
         }
         Ok(merge(parts))
+    }
+}
+
+impl Extractor for PdfTextExtractor {
+    fn extract<'a>(&'a self, envelope: &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> {
+        Box::pin(async move { self.extract_sync(envelope) })
     }
 }
 
