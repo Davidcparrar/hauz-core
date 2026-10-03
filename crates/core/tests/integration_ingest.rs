@@ -8,10 +8,13 @@ use common::{Result, TmpDbFile};
 use hauz_core::bill::{BillingPeriod, Currency, Money, Status, Vendor};
 use hauz_core::email::Envelope;
 use hauz_core::extract::{
-    Confidence, Error as ExtractError, Escalate, Extraction, Extractor, Field, Source, Span,
-    TextExtractor,
+    Chain, Confidence, Error as ExtractError, Escalate, Extraction, Extractor, Field,
+    PdfTextExtractor, Source, Span, TextExtractor,
 };
 use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Error, Outcome, ingest, raw_hash};
+use hauz_core::llm::{
+    Error as LlmError, LlmClient, LlmExtractor, LlmOptions, LlmRequest, Rasterizer,
+};
 use hauz_core::store::{BillStore, SqliteStore};
 use time::macros::date;
 
@@ -166,5 +169,79 @@ async fn ac5_escalate_fills_missing_period_text_extractor_alone_needs_review() -
     };
     let plain_bill = plain_store.get(&plain_id).await?.ok_or("missing bill")?;
     assert_eq!(plain_bill.status(), Status::NeedsReview);
+    Ok(())
+}
+
+/// A full, schema-conformant reply at confidence 100 — the spec's "full reply" fixture.
+const FULL_REPLY: &str = "```json\n{\"vendor\":\"Acme Power\",\"amount_minor_units\":999,\
+\"currency\":\"USD\",\"period_start\":\"2026-09-01\",\"period_end\":\"2026-09-30\",\
+\"issued\":\"2026-10-01\",\"due\":\"2026-10-15\",\"confidence\":100}\n```";
+
+/// Always replies with the fixed "full reply" fixture, ignoring the request.
+struct FullReplyClient;
+
+impl LlmClient for FullReplyClient {
+    fn complete<'a>(
+        &'a self,
+        _req: &'a LlmRequest,
+    ) -> hauz_core::BoxFuture<'a, core::result::Result<String, LlmError>> {
+        Box::pin(async move { Ok(FULL_REPLY.to_owned()) })
+    }
+}
+
+/// `bill_eml()` has no attachments, so this is never called; it errors loudly if it ever is.
+struct UnusedRasterizer;
+
+impl Rasterizer for UnusedRasterizer {
+    fn rasterize(
+        &self,
+        _pdf: &[u8],
+        _max_pages: u8,
+    ) -> core::result::Result<Vec<Vec<u8>>, LlmError> {
+        Err(LlmError::Rasterizer {
+            reason: "bill_eml() has no PDF attachments; the rasterizer must not run".to_owned(),
+        })
+    }
+}
+
+/// AC6: `bill_eml()` (amount/due at heuristic confidence 90, sender-domain vendor at 20, no
+/// period) ingested via `Escalate(Chain([TextExtractor, PdfTextExtractor]),
+/// LlmExtractor(full-reply fake), 50)` is stored `Extracted`: the heuristic's higher-confidence
+/// amount (123 456 EUR, 90 beats 70) and due survive, while the model's higher-confidence
+/// vendor (`Acme Power`, 70 beats 20) and its only period (2026-09-01..30) fill the rest.
+#[tokio::test]
+async fn ac6_escalate_with_llm_extractor_fills_vendor_and_period() -> Result<()> {
+    let raw = common::bill_eml();
+    let db = TmpDbFile::new("ingest-ac6-llm-escalate");
+    let store = SqliteStore::open(&db.path).await?;
+
+    let primary = Chain::new(vec![Box::new(TextExtractor), Box::new(PdfTextExtractor)]);
+    let secondary = LlmExtractor::new(
+        Box::new(FullReplyClient),
+        Box::new(UnusedRasterizer),
+        LlmOptions::default(),
+    );
+    let escalate = Escalate::new(Box::new(primary), Box::new(secondary), 50);
+
+    let outcome = ingest(&raw, &escalate, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(bill.vendor(), Some(&Vendor::new("Acme Power")?));
+    assert_eq!(
+        bill.period(),
+        Some(&BillingPeriod::new(
+            date!(2026 - 09 - 01),
+            date!(2026 - 09 - 30)
+        )?)
+    );
+    assert_eq!(bill.due(), Some(date!(2026 - 10 - 15)));
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(123_456, Currency::new("EUR")?))
+    );
     Ok(())
 }
