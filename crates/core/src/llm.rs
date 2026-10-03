@@ -1,7 +1,9 @@
-//! The LLM-side system edges: a chat client, a PDF page rasterizer, and env configuration.
-//! Each is an injectable trait so other modules (and tests) never depend on a live model, a
-//! real `pdftoppm` binary, or the process environment. The extractor that wires these
-//! together is a later feature (#26); this module only owns the edges.
+//! The LLM-side system edges — a chat client ([`LlmClient`]), a PDF page rasterizer
+//! ([`Rasterizer`]), and env configuration ([`Config`]) — each an injectable trait or
+//! fallible constructor so other modules (and tests) never depend on a live model, a real
+//! `pdftoppm` binary, or the process environment. [`LlmExtractor`] wires them together behind
+//! [`crate::extract::Extractor`]: it sends an envelope's body and PDF attachments to the
+//! client with a JSON schema and maps the reply into an `Extraction`.
 
 use std::collections::BTreeSet;
 use std::fmt;
