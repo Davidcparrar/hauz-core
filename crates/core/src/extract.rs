@@ -346,6 +346,10 @@ const ANCHOR_WINDOW: usize = 40;
 
 /// A dependency-free heuristic [`Extractor`]: scans the text body and a tag-stripped HTML
 /// body for an amount, issue date, due date, and sender-domain vendor. Never sets `period`.
+/// An amount needs an adjacent currency marker: `€`, `£`, a bare 3-letter code, or a code
+/// glued to a `$` sign (`COP$`, `US$`). A bare `$` on its own is never a currency marker, so
+/// the numeral beside it is not an amount either — Colombian pesos and US dollars both use
+/// `$`, and guessing wrong is worse than asking for review.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextExtractor;
 
@@ -677,7 +681,8 @@ impl Spanned for AmountMatch {
 }
 
 /// Finds every amount in `text`: a digit-group numeral immediately adjacent (≤1 space) to a
-/// currency symbol or 3-letter code. A numeral with no adjacent currency marker is not an
+/// currency marker: `€`/`£`, a bare 3-letter code, or a code glued to a `$` sign (`COP$`,
+/// `US$`). A bare `$` is never a marker. A numeral with no adjacent currency marker is not an
 /// amount and is skipped.
 fn find_amounts(text: &str) -> Vec<AmountMatch> {
     let mut results = Vec::new();
@@ -822,11 +827,19 @@ struct CurrencyMatch {
     end: usize,
 }
 
-/// Looks for a currency symbol or 3-letter code starting at `from`, allowing up to one
-/// space/NBSP between `from` and the marker.
+/// Looks for a currency marker starting at `from`, allowing up to one space/NBSP between
+/// `from` and the marker: a code glued to a `$` sign (`COP$`, `US$`), a `€`/`£` symbol, or a
+/// bare 3-letter code. A bare `$` is not a marker.
 fn match_currency_after(text: &str, from: usize) -> Option<CurrencyMatch> {
     let rest = text.get(from..)?;
     let (skip, rest) = skip_one_space(rest);
+    if let Some((code, len)) = glued_code_marker(rest) {
+        return Some(CurrencyMatch {
+            code,
+            start: from,
+            end: from + skip + len,
+        });
+    }
     if let Some((code, len)) = symbol_marker(rest) {
         return Some(CurrencyMatch {
             code,
@@ -844,13 +857,19 @@ fn match_currency_after(text: &str, from: usize) -> Option<CurrencyMatch> {
     None
 }
 
-/// Looks for a currency symbol or 3-letter code ending at `before`, allowing up to one
-/// space/NBSP between the marker and `before`.
+/// Looks for a currency marker ending at `before`, allowing up to one space/NBSP between the
+/// marker and `before`: a code glued to a `$` sign (`COP$`, `US$`), a `€`/`£` symbol, or a
+/// bare 3-letter code. A bare `$` is not a marker, so it is skipped as if it were not there.
 fn match_currency_before(text: &str, before: usize) -> Option<CurrencyMatch> {
     let prefix = text.get(..before)?;
     let trimmed_end = trim_one_trailing_space(prefix);
+    let head = text.get(..trimmed_end)?;
 
-    if let Some(c) = text.get(..trimmed_end)?.chars().next_back()
+    if head.ends_with('$') {
+        return glued_code_before(text, trimmed_end, before);
+    }
+
+    if let Some(c) = head.chars().next_back()
         && let Some(code) = symbol_currency(c)
     {
         return Some(CurrencyMatch {
@@ -877,6 +896,55 @@ fn match_currency_before(text: &str, before: usize) -> Option<CurrencyMatch> {
     None
 }
 
+/// Matches `<CODE>$` (three ASCII uppercase letters) or `US$` ending right at `dollar_end`
+/// (the byte offset just past a `$` already confirmed present at `dollar_end - 1`). The span
+/// starts at the code's first letter and ends at `before` (covering any trimmed space).
+/// Neither glued form present ⇒ the `$` is bare and skipped as if it were not there.
+fn glued_code_before(text: &str, dollar_end: usize, before: usize) -> Option<CurrencyMatch> {
+    let dollar_start = dollar_end.checked_sub(1)?;
+    if let Some(start) = dollar_start.checked_sub(3) {
+        let candidate = text.get(start..dollar_start)?;
+        if candidate.chars().all(|c| c.is_ascii_uppercase()) && boundary_before(text, start) {
+            return Some(CurrencyMatch {
+                code: candidate.to_string(),
+                start,
+                end: before,
+            });
+        }
+    }
+    if let Some(start) = dollar_start.checked_sub(2) {
+        let candidate = text.get(start..dollar_start)?;
+        if candidate == "US" && boundary_before(text, start) {
+            return Some(CurrencyMatch {
+                code: "USD".to_string(),
+                start,
+                end: before,
+            });
+        }
+    }
+    None
+}
+
+/// Whether the byte immediately before `start` (if any) is not alphanumeric, so a glued or
+/// bare code is not actually the tail of a longer word.
+fn boundary_before(text: &str, start: usize) -> bool {
+    text.get(..start)
+        .and_then(|p| p.chars().next_back())
+        .is_none_or(|c| !c.is_ascii_alphanumeric())
+}
+
+/// Matches `<CODE>$` (three ASCII uppercase letters) or `US$` at the very start of `s`.
+fn glued_code_marker(s: &str) -> Option<(String, usize)> {
+    let head = s.get(..3)?;
+    if head.chars().all(|c| c.is_ascii_uppercase()) && s.get(3..4) == Some("$") {
+        return Some((head.to_string(), 4));
+    }
+    if s.get(..2) == Some("US") && s.get(2..3) == Some("$") {
+        return Some(("USD".to_string(), 3));
+    }
+    None
+}
+
 fn skip_one_space(s: &str) -> (usize, &str) {
     if let Some(c) = s.chars().next()
         && (c == ' ' || c == '\u{00A0}')
@@ -897,10 +965,12 @@ fn trim_one_trailing_space(s: &str) -> usize {
     s.len()
 }
 
+/// A currency symbol with no ambiguity across locales. `$` is deliberately absent: it is
+/// shared by too many currencies (USD, COP, ...) to mean anything on its own — see
+/// [`glued_code_before`] and [`glued_code_marker`] for the glued-code forms that do resolve.
 fn symbol_currency(c: char) -> Option<&'static str> {
     match c {
         '€' => Some("EUR"),
-        '$' => Some("USD"),
         '£' => Some("GBP"),
         _ => None,
     }

@@ -42,7 +42,7 @@ Out of scope: fetching mail (a webhook hands us the raw message), analytics, fro
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
   Llm(llm::Error) }`), `merge(Vec<Extraction>)` (highest confidence per
-  field, notes unioned; ties by value then span: order-insensitive, idempotent), `TextExtractor` (heuristic scanner over `text` and tag-stripped `html`; no regex),
+  field, notes unioned; ties by value then span: order-insensitive, idempotent), `TextExtractor` (heuristic scanner over `text` and tag-stripped `html`; no regex; a bare `$` is no currency, `COP$`/`US$` are),
   `PdfTextExtractor` (same scanner over the text layer of each `application/pdf`
   document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
   `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`), `Chain`
@@ -94,7 +94,7 @@ application never talks to S3. Turso stays possible as a second `BillStore` impl
 
 ## Risks / debt
 - The real corpus (7 bills, 2026-10-03) all lands `NeedsReview` heuristically: vendor = sender domain,
-  `$` read as `USD` not `COP`, no period. With the LLM pass (gemma4, 2026-10-03) 2 are `Extracted` and 5
-  name the vendor, but a heuristic `$`→`USD` amount at 90 outranks the model's capped 70 (#28);
-  DIAN e-invoice zips (UBL XML) deserve an exact extractor (#27). A slightly wrong xref reads as empty.
+  no amount for the four bare-`$` Colombian bills (#28), no period. The LLM pass (gemma4, before #28)
+  made 2 `Extracted` and named 5 vendors. DIAN e-invoice zips (UBL XML) deserve an exact extractor
+  (#27). A slightly wrong xref reads as empty.
 - Single-writer SQLite suits one ingest service; a second writer means Turso/Postgres.

@@ -20,6 +20,7 @@ use time::macros::date;
 
 const PLAIN: &[u8] = include_bytes!("fixtures/plain.eml");
 const MALFORMED: &[u8] = include_bytes!("fixtures/malformed.eml");
+const CO_BARE_DOLLAR: &[u8] = include_bytes!("fixtures/co_bare_dollar.eml");
 
 /// Lowercase hex encoding, test-local (the crate's own encoder is private).
 fn to_hex(bytes: &[u8]) -> String {
@@ -242,6 +243,76 @@ async fn ac6_escalate_with_llm_extractor_fills_vendor_and_period() -> Result<()>
     assert_eq!(
         bill.amount(),
         Some(&Money::new(123_456, Currency::new("EUR")?))
+    );
+    Ok(())
+}
+
+/// AC4: a bare-`$` bill (no other currency marker) ingested via `Chain([TextExtractor,
+/// PdfTextExtractor])` is stored `NeedsReview` with amount `None`, the due date and the
+/// sender-domain vendor still set.
+#[tokio::test]
+async fn ac4_bare_dollar_bill_is_needs_review_with_no_amount() -> Result<()> {
+    let db = TmpDbFile::new("ingest-28-ac4");
+    let store = SqliteStore::open(&db.path).await?;
+    let chain = Chain::new(vec![Box::new(TextExtractor), Box::new(PdfTextExtractor)]);
+
+    let outcome = ingest(CO_BARE_DOLLAR, &chain, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::NeedsReview);
+    assert_eq!(bill.amount(), None);
+    assert_eq!(bill.due(), Some(date!(2026 - 10 - 15)));
+    assert_eq!(bill.vendor(), Some(&Vendor::new("acme-energia.example")?));
+    Ok(())
+}
+
+/// A fake [`LlmClient`] that always replies with a fixed, full, schema-conformant extraction
+/// for the bare-dollar bill: vendor `Acme Energía`, amount 123 456 700 `COP`, period
+/// 2026-09-01..30, due 2026-10-15, confidence 100.
+struct BareDollarLlmClient;
+
+impl LlmClient for BareDollarLlmClient {
+    fn complete<'a>(
+        &'a self,
+        _req: &'a LlmRequest,
+    ) -> hauz_core::BoxFuture<'a, core::result::Result<String, LlmError>> {
+        let reply = "```json\n{\"vendor\":\"Acme Energía\",\"amount_minor_units\":123456700,\
+\"currency\":\"COP\",\"period_start\":\"2026-09-01\",\"period_end\":\"2026-09-30\",\
+\"issued\":null,\"due\":\"2026-10-15\",\"confidence\":100}\n```"
+            .to_owned();
+        Box::pin(async move { Ok(reply) })
+    }
+}
+
+/// AC5: the same bare-`$` bill, now escalated to the model when the heuristic chain is
+/// incomplete, is stored `Extracted` with the model's amount (no heuristic amount outranks
+/// it, since a bare `$` is no longer read as `USD`).
+#[tokio::test]
+async fn ac5_bare_dollar_bill_escalates_to_model_amount() -> Result<()> {
+    let db = TmpDbFile::new("ingest-28-ac5");
+    let store = SqliteStore::open(&db.path).await?;
+
+    let primary = Chain::new(vec![Box::new(TextExtractor), Box::new(PdfTextExtractor)]);
+    let secondary = LlmExtractor::new(
+        Box::new(BareDollarLlmClient),
+        Box::new(UnusedRasterizer),
+        LlmOptions::default(),
+    );
+    let escalate = Escalate::new(Box::new(primary), Box::new(secondary), 50);
+
+    let outcome = ingest(CO_BARE_DOLLAR, &escalate, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(123_456_700, Currency::new("COP")?))
     );
     Ok(())
 }
