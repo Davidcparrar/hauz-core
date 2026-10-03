@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use hauz_core::bill::{Currency, Money, Vendor};
 use hauz_core::email::{Document, Envelope, MimeType};
 use hauz_core::extract::{
-    Confidence, Error, Extraction, Extractor, Field, Note, PdfTextExtractor, Source, Span,
+    Chain, Confidence, Error, Extraction, Extractor, Field, Note, PdfTextExtractor, Source, Span,
     TextExtractor, merge,
 };
 use time::macros::date;
@@ -368,4 +368,88 @@ fn ac6_merge_unions_notes() {
             Note::NoTextLayer { document: 1 },
         ])
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// Chain (feature #7)
+// ---------------------------------------------------------------------------------------
+
+/// Always returns a clone of the fixed extraction it was built with, ignoring the envelope.
+#[derive(Clone)]
+struct Fixed(Extraction);
+
+impl Extractor for Fixed {
+    fn extract(&self, _envelope: &Envelope) -> std::result::Result<Extraction, Error> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Always fails, as if an internal confidence computation went out of range.
+struct Failing;
+
+impl Extractor for Failing {
+    fn extract(&self, _envelope: &Envelope) -> std::result::Result<Extraction, Error> {
+        Err(Error::InvalidConfidence(101))
+    }
+}
+
+/// An `Extraction` with only `amount` set, at `confidence`.
+fn amount_only(confidence: u8) -> Result<Extraction> {
+    Ok(Extraction {
+        amount: Some(Field {
+            value: Money::new(123_456, Currency::new("EUR")?),
+            confidence: Confidence::new(confidence)?,
+            span: Span {
+                source: Source::Text,
+                start: 0,
+                end: 4,
+            },
+        }),
+        ..Extraction::default()
+    })
+}
+
+/// An `Extraction` with `amount` and `vendor` set, at `confidence`.
+fn amount_and_vendor(confidence: u8) -> Result<Extraction> {
+    Ok(Extraction {
+        vendor: Some(Field {
+            value: Vendor::new("acme.example")?,
+            confidence: Confidence::new(confidence)?,
+            span: Span {
+                source: Source::Text,
+                start: 10,
+                end: 14,
+            },
+        }),
+        ..amount_only(confidence)?
+    })
+}
+
+/// AC7: `Chain` of two `Fixed` extractors (one yields amount at 60, the other vendor and
+/// amount at 40) extracts returns `merge(vec![a, b])`.
+#[test]
+fn ac7_chain_merges_two_fixed_extractors() -> Result<()> {
+    let envelope = envelope("billing@example.com", None, None);
+    let a = amount_only(60)?;
+    let b = amount_and_vendor(40)?;
+
+    let chain = Chain::new(vec![Box::new(Fixed(a.clone())), Box::new(Fixed(b.clone()))]);
+    let result = chain.extract(&envelope)?;
+
+    assert_eq!(result, merge(vec![a, b]));
+    Ok(())
+}
+
+/// AC8: when any extractor in a `Chain` returns `Err`, `Chain::extract` returns that `Err`.
+#[test]
+fn ac8_chain_propagates_first_err() -> Result<()> {
+    let envelope = envelope("billing@example.com", None, None);
+    let chain = Chain::new(vec![
+        Box::new(Fixed(Extraction::default())),
+        Box::new(Failing),
+    ]);
+
+    let result = chain.extract(&envelope);
+    assert_eq!(result, Err(Error::InvalidConfidence(101)));
+    Ok(())
 }
