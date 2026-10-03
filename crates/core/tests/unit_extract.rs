@@ -21,6 +21,7 @@ const US_TOTAL: &str = include_str!("fixtures/extract/us_total.txt");
 const FR_SPACE: &str = include_str!("fixtures/extract/fr_space.txt");
 const ES_TABLE: &str = include_str!("fixtures/extract/es_table.html");
 const NOISE: &str = include_str!("fixtures/extract/noise.txt");
+const CO_BARE_DOLLAR: &str = include_str!("fixtures/extract/co_bare_dollar.txt");
 
 /// An otherwise-empty envelope with just a sender and, optionally, a text/html body.
 fn envelope(sender: &str, text: Option<&str>, html: Option<&str>) -> Envelope {
@@ -201,6 +202,84 @@ fn ac8_merge_keeps_higher_confidence_and_union_of_fields() -> Result<()> {
         date!(2026 - 01 - 01)
     );
     assert_eq!(merged.issued, None);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------
+// A bare `$` is not a currency marker (feature #28)
+// ---------------------------------------------------------------------------------------
+
+/// AC1: a bare `$` next to a numeral is not a currency marker, so `TextExtractor` yields no
+/// amount at all, while the due date and sender-domain vendor are unaffected.
+#[tokio::test]
+async fn ac1_bare_dollar_numeral_is_not_an_amount() -> Result<()> {
+    let envelope = envelope(
+        "facturacion@acme-energia.example",
+        Some(CO_BARE_DOLLAR),
+        None,
+    );
+    let extraction = TextExtractor.extract(&envelope).await?;
+
+    assert_eq!(extraction.amount, None);
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 10 - 15));
+    assert_eq!(due.confidence, Confidence::new(90)?);
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("acme-energia.example")?);
+    Ok(())
+}
+
+/// AC2: a code glued to the sign (`COP$`, with the span starting at the code's first letter;
+/// `US$`) or standing beside the numeral (`$ ... USD`) still resolves to the right currency.
+#[tokio::test]
+async fn ac2_glued_or_adjacent_currency_code_resolves() -> Result<()> {
+    let text = "Total a pagar: COP$ 1.234.567";
+    let env = envelope("billing@example.com", Some(text), None);
+    let amount = TextExtractor
+        .extract(&env)
+        .await?
+        .amount
+        .ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(123_456_700, Currency::new("COP")?));
+    assert_eq!(amount.confidence, Confidence::new(90)?);
+    assert_eq!(&text[amount.span.start..amount.span.end], "COP$ 1.234.567");
+
+    let text = "Amount due: US$1,234.56";
+    let env = envelope("billing@example.com", Some(text), None);
+    let amount = TextExtractor
+        .extract(&env)
+        .await?
+        .amount
+        .ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(123_456, Currency::new("USD")?));
+
+    let text = "Total: $ 1,234.56 USD";
+    let env = envelope("billing@example.com", Some(text), None);
+    let amount = TextExtractor
+        .extract(&env)
+        .await?
+        .amount
+        .ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(123_456, Currency::new("USD")?));
+    Ok(())
+}
+
+/// AC3: the bare-`$` numeral is not a candidate at all, so the unanchored `EUR` amount past
+/// the anchor window wins even though it is textually smaller.
+#[tokio::test]
+async fn ac3_bare_dollar_skipped_unanchored_fallback_wins() -> Result<()> {
+    let text = "Total: $ 999.00\nReference from a previous statement, not a charge: 12.00 EUR";
+    let envelope = envelope("billing@example.com", Some(text), None);
+    let amount = TextExtractor
+        .extract(&envelope)
+        .await?
+        .amount
+        .ok_or("expected amount")?;
+
+    assert_eq!(amount.value, Money::new(1_200, Currency::new("EUR")?));
+    assert_eq!(amount.confidence, Confidence::new(40)?);
     Ok(())
 }
 
