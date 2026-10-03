@@ -18,3 +18,15 @@ verify.sh: `verify: ALL GREEN`
 
 REQUIRED CHANGES: (1) architecture cli entry-point line, (2) decisions #8 line, (3, optional)
 pid in `tmp_dir()`.
+
+## Cycle 2 — 2026-10-02, reviewer on c6c75b0
+VERDICT: APPROVE
+verify.sh: `verify: ALL GREEN` (doc budgets included; tree clean afterwards)
+
+- `docs/architecture.md` cli line documents grammar, `./hauz.db` default, read-then-open,
+  `Created|Duplicate <id>` stdout, exits 0/1/2, `-h|--help`, hand parsing, the chain over
+  `SqliteStore`; each clause matches `crates/cli/src/{main,args}.rs` and the spec.
+- `docs/decisions.md` has the one `#8` line matching the spec's design calls.
+- `tmp_dir()` is now `hauz-cli-{pid}-{nanos}-{counter}`; only that test file changed since
+  the implementation commit; `core`, `server`, root manifest untouched.
+- `ac1_`…`ac7_` all `[e2e]` via `assert_cmd`, no mocks of project types.
