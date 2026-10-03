@@ -34,6 +34,13 @@ hauz ingest path/to/bill.eml --db /tmp/replay.db
   Flag and positional may appear in any order after `ingest`.
 - Exit 0 on success, 1 on a runtime error (unreadable file, unparseable mail, store error;
   message on stderr), 2 on a usage error. `hauz --help` prints the usage line.
+- Optional LLM pass (server and CLI alike): set `HAUZ_LLM_PROVIDER` to `ollama`, `anthropic`
+  or `openai` plus `HAUZ_LLM_MODEL`; `anthropic`/`openai` need `ANTHROPIC_API_KEY` /
+  `OPENAI_API_KEY` (`*_BASE_URL` optional), `ollama` reads `OLLAMA_API_BASE_URL` (default
+  `http://localhost:11434`). PDF pages are rasterized with poppler's `pdftoppm` (must be on
+  `PATH`). The model runs only when the heuristics leave a bill short of `Extracted`; a
+  missing or invalid variable exits 1 before the database is touched, and an unreachable
+  model stores the bill `NeedsReview` with the heuristic fields rather than failing.
 - Replay a whole folder and inspect what the extractor made of it (`sqlite3` is enough):
   ```
   rm -f /tmp/replay.db*
