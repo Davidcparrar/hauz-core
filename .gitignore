@@ -3,3 +3,10 @@
 # keep *.proptest-regressions: they are found counterexamples, not build output
 # brownfield onboarding notes are scratch, not docs
 docs/onboarding/
+# private bill corpus never enters the repo: it lives in ~/hauz-corpus (HAUZ_CORPUS_DIR)
+crates/core/tests/fixtures/scanned/
+corpus/
+*.db
+*.sqlite3
+*.db-wal
+*.db-shm
