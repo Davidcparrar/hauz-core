@@ -1,15 +1,15 @@
 # Spec: extract: `LlmExtractor` behind `Escalate` with env wiring (#26)
 
 ## Problem
-Second half of #23. `llm::LlmExtractor` implements `extract::Extractor`: body and PDFs
+Second half of #23: `llm::LlmExtractor` implements `extract::Extractor`: body and PDFs
 (pages plus text layer) go to an `LlmClient` with a JSON schema; the reply maps into an
 `Extraction`. With `HAUZ_LLM_PROVIDER` set, server and CLI wrap today's chain in `Escalate`,
 so bills left `NeedsReview` get a model pass; unset, nothing changes.
 
 ## Non-goals
 - No retries, caching, streaming, per-provider prompts, zip/UBL-XML (#27), non-PDF documents.
-- No change to `merge`, `Escalate`, `ingest`'s status rule, routes or CLI grammar.
-- Private corpus stays out of the repo; live runs are local only.
+- No change to `merge`, `Escalate`, `ingest`'s status rule, routes, CLI grammar.
+- Private corpus stays out of the repo; live runs stay local.
 
 ## Assumptions
 - no spike: rig, fenced replies and `pdftoppm` are #23 spike-verified; the rest is in-repo.
@@ -22,7 +22,7 @@ so bills left `NeedsReview` get a model pass; unset, nothing changes.
   (`extract`'s stripper becomes `pub(crate)`), truncated to `max_body_chars` chars; then per
   `application/pdf` document `Png` per rasterized page (`RasterizedPages`, `max_pages`) or
   one `Pdf` (`Native`, rasterizer not called), then `Text(layer)` when
-  `PdfTextExtractor::text_layer` is `Ok(Some)`. Other mimes skipped. No parts ⇒ `Ok(default)`, no call.
+  `PdfTextExtractor::text_layer` is `Ok(Some)`; other mimes skipped. No parts ⇒ `Ok(default)`, no call.
 - Design call: `instructions` names the fields, ISO-8601 dates, integer minor units,
   3-letter currency (resolve `$` from country/language cues), `null` when absent, honest
   `confidence`. Private schema `LlmFields { vendor: Option<String>, amount_minor_units:
@@ -49,7 +49,8 @@ so bills left `NeedsReview` get a model pass; unset, nothing changes.
 ## Architecture delta
 - `llm`: `LlmExtractor`, `LlmOptions`, `PdfDelivery`.
 - `extract`: `Source::Model`, `Note::{LlmUnavailable, LlmMalformed}`, `Error::Llm`.
-- `crates/server/src/main.rs`, `crates/cli/src/main.rs`: env wiring. No manifest change.
+- `crates/server/src/main.rs`, `crates/cli/src/main.rs`: env wiring. `crates/core/Cargo.toml`:
+  `serde_json` becomes a regular dependency (allowed, workspace-pinned).
 - `PROMOTES: llm, extract` → `docs/architecture.md` (module lines, entry points, risks),
   one `docs/decisions.md` line, README env section.
 
@@ -59,7 +60,7 @@ Files: `crates/core/tests/unit_llm.rs` (AC1–AC5), `integration_ingest.rs` (AC6
 llm::Error>, seen: Mutex<Vec<LlmRequest>> }`, `FakeRasterizer(Result<Vec<Vec<u8>>,
 llm::Error>)`; PDF via `common::minimal_pdf`. "Full reply" = vendor
 `Acme Power`, 999 `USD`, period 2026-09-01..2026-09-30, issued 2026-10-01, due 2026-10-15,
-confidence 100, in a ```` ```json ```` fence.
+confidence 100, fenced.
 - AC1 [unit] WHEN an envelope has `text`, `html`, a `minimal_pdf` and an `image/png`
   document and the rasterizer yields two PNGs THE SYSTEM SHALL send exactly `[Text(text),
   Png, Png, Text(layer containing the PDF's line)]`, non-empty `instructions`, a schema
