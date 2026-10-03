@@ -3,19 +3,25 @@
 #![allow(dead_code)] // not every fixture is used by every test file
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use hauz_core::store::{BillStore, SqliteStore};
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A fresh, unique directory under `std::env::temp_dir()` for one test's process `cwd` and
-/// `--db` path, so parallel tests never collide.
+/// `--db` path, so parallel tests (across processes and threads) never collide. The name
+/// mixes the process id, the current time in nanoseconds, and a per-process counter, since
+/// time alone can repeat across threads scheduled close together.
 pub(crate) fn tmp_dir() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    let dir = std::env::temp_dir().join(format!("hauz-cli-{nanos}"));
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("hauz-cli-{pid}-{nanos}-{n}"));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
