@@ -1,7 +1,7 @@
 # /project-init — One-time project layer (greenfield or brownfield)
 
-Conversational, AskUserQuestion-driven; the human is in the room. The two hard gates live
-in `/feature`. Done when `verify.sh` is green and the seed issues exist.
+Conversational, AskUserQuestion-driven; the human is in the room (the only other place they
+are: the PR merge). The gates live in `/feature`. Done when `verify.sh` is green and the seed issues exist.
 
 1. **Brownfield only** (code already exists): spawn 2–3 read-only Explore agents in ONE
    message on disjoint slices (entry points & flows / crate & module boundaries /
@@ -20,7 +20,7 @@ in `/feature`. Done when `verify.sh` is green and the seed issues exist.
 5. **GitHub** — confirm `main` is the default branch (`gh repo view --json
    defaultBranchRef`; `Closes #n` only fires on the default branch). Create the labels
    once: `gh label create feature --color 1D76DB --description "harness feature" --force`
-   and `gh label create approved --color 0E8A16 --description "Gate 1: spec approved"
+   and `gh label create approved --color 0E8A16 --description "Gate 1: spec self-checked by the Leader"
    --force`.
 6. **Seed issues** — one issue per feature sized to a single `/feature` pass:
    `gh issue create --label feature --title "<title>" --body "<one paragraph>\n\nDepends

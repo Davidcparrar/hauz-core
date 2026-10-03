@@ -15,24 +15,29 @@ incomplete step. Never redo completed work; never skip a gate that is not record
    budget ~20 calls). Done ⇔ `features/<n>/spike/findings.md` ends with the marker.
    If skipped, the spec's Assumptions must say `no spike: <reason>`.
 3. **Spec.** Copy `features/_template/spec.md` to `features/<n>/spec.md` and draft it
-   with the human in the room. Walk the Gate-1 checklist at the bottom of the template.
-4. **GATE 1.** Ask for explicit approval. Silence, "looks fine", or moving on is not
-   approval; only "approved" (or equivalent) is. On rejection route by class
-   (CLAUDE.md › Rejection routing) and return to step 3.
+   yourself from the issue, architecture and core's pub surface. Design calls you make
+   go in Assumptions so the human sees them in the PR.
+4. **GATE 1 (self-check).** Walk the checklist at the bottom of the template and fix the
+   spec until every box holds. Do not ask the human and do not wait: the spec is reviewed
+   in the PR. On a failing box route by class (CLAUDE.md › Rejection routing), return to 3.
 5. **Record.** `git switch -c feat/<n>` (off an up-to-date `main`), commit the spec (and
    spike findings), `gh issue edit <n> --add-label approved`.
 6. **Implement.** Spawn `implementer-rust` with the delegation contract (objective = this
    spec; files = spec, constitution, architecture; boundaries = `crates/**` only; budget).
-   On `SPEC-CONFLICT` stop and take it to the human (back to step 3 if the spec changes).
+   On `SPEC-CONFLICT` resolve it yourself: amend the spec (back to step 3/4), note the
+   change for the PR body, re-spawn.
 7. **Review.** Spawn `reviewer`. Append its verdict to `features/<n>/review.md`.
    REJECT `code-defect` → re-spawn the implementer with the REQUIRED CHANGES, ≤2 cycles
-   (count `VERDICT:` lines), then escalate to the human. REJECT `spec-amendment` → amend
-   the spec with the human, `--remove-label approved`, re-approve, `--add-label approved`,
-   targeted re-implementation. The spec changes first; code never silently diverges.
+   (count `VERDICT:` lines), then stop and report. REJECT `spec-amendment` → amend the
+   spec, re-walk the Gate-1 checklist, targeted re-implementation, and list the amendment
+   in the PR body. The spec changes first; code never silently diverges.
 8. **Docs delta.** If the spec says `PROMOTES`, update `docs/architecture.md` and append
    a `docs/decisions.md` line yourself, on the branch. Rerun `verify.sh` (budgets).
 9. **PR.** Commit, `git push -u origin feat/<n>`, then
    `gh pr create --base main --head feat/<n> --title "feat: <title> (#<n>)" --body
-   "Closes #<n>\n\nSpec: features/<n>/spec.md\nReview: features/<n>/review.md"`.
+   "Closes #<n>\n\nSpec: features/<n>/spec.md\nReview: features/<n>/review.md"`, plus a
+   **Design calls** section listing the spec's Assumptions the human has not seen and any
+   spec amendment made after Gate 1 — the PR is their only checkpoint.
    **STOP. Gate 2 is the human merging the PR.** You cannot merge (denied) and must not
-   infer it. The issue closes itself on merge; there is no bookkeeping step.
+   infer it. PR comments route per CLAUDE.md › Rejection routing (Gate 2). The issue
+   closes itself on merge; there is no bookkeeping step.

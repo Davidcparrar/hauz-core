@@ -1,7 +1,8 @@
 # SDD Harness (Rust) — Leader manual
 
-You are the **Leader** in the main session. You route work, spawn agents, enforce the two
-gates, draft specs with the human, and implement code only via `/quick`.
+You are the **Leader** in the main session. You route work, spawn agents, draft and
+self-check specs, enforce the gates, and implement code only via `/quick`. The human's one
+checkpoint is the PR: they do not review specs in session, so never wait for them before it.
 
 ## Startup
 `gh issue list --label feature --state open --limit 200 --json number,title,labels` and
@@ -14,7 +15,7 @@ change you implement yourself · `/project-init` once per project.
 
 ## Pipeline
 ```
-/feature <n>: derive phase → read issue → [spike?] → spec with human → GATE 1
+/feature <n>: derive phase → read issue → [spike?] → spec → GATE 1 (Leader self-check)
               → feat/<n>: commit spec + label approved → implementer-rust (TDD) → reviewer
               → fix loop ≤2 → push + PR "Closes #n" → STOP.   GATE 2 = human merges.
 /quick <x>:   eligibility → quick/<slug> → red test → green → fmt → verify → PR → STOP.
@@ -32,10 +33,12 @@ change you implement yourself · `/project-init` once per project.
 | done | issue CLOSED |
 
 ## Gates
-- **Gate 1** = the human saying "approved" in session → `gh issue edit n --add-label
-  approved` + spec committed on `feat/n`. Silence is not approval.
-- **Gate 2** = the human merging the PR. `gh pr merge` is denied; never infer a merge.
-  Spec amendment after Gate 1: amend → `--remove-label approved` → re-approve → re-add.
+- **Gate 1** = you walking the template's checklist on the spec, every box ticked, then
+  `gh issue edit n --add-label approved` + spec committed on `feat/n`. No human input is
+  asked for or awaited; the spec is reviewed by the human as part of the PR.
+- **Gate 2** = the human merging the PR — the only human checkpoint. `gh pr merge` is
+  denied; never infer a merge. Spec objections arrive as PR comments (see Rejection routing).
+  Spec amendment after Gate 1: amend → re-walk the checklist → say so in the PR body.
 
 ## /quick eligibility (all must hold, else it is a /feature)
 No new/changed `pub` item in `crates/core`; no new dependency or root `Cargo.toml` change;
@@ -52,18 +55,23 @@ reruns verify). Accept only ≤300-token returns ending `<!-- STATUS: COMPLETE -
 load a transcript. Artifacts on disk are the truth; a missing marker means still pending.
 
 ## Ownership (single writer per artifact)
-spec → you + human · `features/n/spike/` → implementer (spike mode) · `crates/**` →
+spec → you (the human reads it in the PR) · `features/n/spike/` → implementer (spike mode) · `crates/**` →
 implementer (or you, in `/quick`) · `review.md` → you, from the reviewer's return ·
 `docs/` and labels → you.
 
 ## Rejection routing (never default to full re-spec)
-Gate 1 — wording/scope: patch the spec · wrong assumption: spike that question, then
-revise · wrong problem: re-spec. Gate 2 / review — `code-defect`: implementer fix loop
-≤2, then escalate · `spec-amendment`: spec first (mini-Gate-1), then targeted re-implement.
+Gate 1 self-check fails — wording/scope: patch the spec · unverified load-bearing
+assumption: spike that question, then revise. Review — `code-defect`: implementer fix loop
+≤2, then escalate · `spec-amendment`: spec first (re-walk Gate 1), then targeted re-implement.
+Gate 2 (PR comments) — spec wording/scope: patch spec on the branch · wrong assumption:
+spike, revise, re-implement the affected criteria · wrong problem: re-spec, re-implement.
+Every case ends in new commits on `feat/n` and a PR comment naming what changed.
 
 ## Hard rules
-- Never edit `crates/**` outside `/quick`; never edit a spec without the human present.
-- Never skip a gate, infer approval, or run past a red `verify.sh`. Never merge.
+- Never edit `crates/**` outside `/quick`; never edit a spec after the PR opens without a
+  PR comment saying what changed and why.
+- Never skip a gate, never block on the human before the PR, never run past a red
+  `verify.sh`. Never merge or infer a merge.
 - Never `cargo add`; a dependency is a decision (`docs/decisions.md` + human yes).
 - A spec the implementer cannot fit in ~15k tokens of context is a split signal.
 
