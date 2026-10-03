@@ -48,8 +48,10 @@ message), analytics, frontend, mobile.
   tag-stripped `html`: anchored amounts/dates, sender-domain vendor; no regex),
   `PdfTextExtractor` (same scanner over the text layer of each `application/pdf`
   document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
-  `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`). Callers run
-  several extractors and `merge`; an LLM-backed impl slots in behind the same trait.
+  `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`), `Chain`
+  (`Chain::new(Vec<Box<dyn Extractor>>)`, itself an `Extractor`: runs each in order, first
+  `Err` wins, else `merge`). Binaries hold one `Chain`; an LLM-backed impl slots in behind
+  the same trait.
 - `store` — owns persistence; interface: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
   `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via boxed futures,
   `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
@@ -64,8 +66,14 @@ message), analytics, frontend, mobile.
   stores nothing; `issued` and `notes` are not persisted.
 
 ## Entry points
-- server: `pub fn router(state: AppState) -> axum::Router` (lib) + `main.rs` binds and
-  serves. `POST /v1/ingest/email` takes the raw RFC 5322 message body; `GET /v1/bills/{id}`.
+- server (`crates/server`, lib + `main.rs`): `AppState::new(Arc<dyn BillStore>, Arc<dyn
+  Extractor>)`, `pub fn router(state: AppState) -> axum::Router`, `MAX_BODY_BYTES` (25 MiB,
+  413 beyond). `POST /v1/ingest/email` takes the raw RFC 5322 bytes as the body (any
+  `Content-Type`): 201 created / 200 duplicate with `{"id"}`, 400 on `ingest::Error::{Email,
+  Extract}`, 500 (`"internal error"`, nothing leaked) on anything else. `GET /v1/bills/{id}`:
+  200 with the `Bill` JSON (`BillDraft` shape), 404 for an unknown or malformed id. `main.rs`
+  reads `DATABASE_URL` (SQLite path, `sqlite://` prefix tolerated) and `BIND_ADDR` (default
+  `127.0.0.1:8080`), runs `Chain([TextExtractor, PdfTextExtractor])`; untested by design.
 - cli: `hauz ingest <file.eml>` — same pipeline, local file, for dev and replay.
 
 ## Storage
