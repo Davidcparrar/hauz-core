@@ -160,6 +160,37 @@ pub fn merge(extractions: Vec<Extraction>) -> Extraction {
     result
 }
 
+/// Runs several [`Extractor`]s in order and [`merge`]s their results: a composition the
+/// server (and any other caller) uses to combine, e.g., [`TextExtractor`] and
+/// [`PdfTextExtractor`] behind one `&dyn Extractor`.
+pub struct Chain(Vec<Box<dyn Extractor>>);
+
+impl Chain {
+    /// Wraps `extractors`, run in order by [`Extractor::extract`].
+    #[must_use]
+    pub fn new(extractors: Vec<Box<dyn Extractor>>) -> Self {
+        Self(extractors)
+    }
+}
+
+impl std::fmt::Debug for Chain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chain").field("len", &self.0.len()).finish()
+    }
+}
+
+impl Extractor for Chain {
+    /// Runs each extractor in order, stopping at (and returning) the first `Err`; otherwise
+    /// returns `merge` of every extractor's `Extraction`.
+    fn extract(&self, envelope: &Envelope) -> Result<Extraction, Error> {
+        let mut results = Vec::with_capacity(self.0.len());
+        for extractor in &self.0 {
+            results.push(extractor.extract(envelope)?);
+        }
+        Ok(merge(results))
+    }
+}
+
 /// Keeps `candidate` over `*acc` when `candidate` has higher confidence, or (tied) a smaller
 /// structural key, or (tied again) a smaller span.
 fn merge_field<T, K, F>(acc: &mut Option<Field<T>>, candidate: Option<Field<T>>, key: F)

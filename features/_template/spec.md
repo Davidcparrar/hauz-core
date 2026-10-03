@@ -1,5 +1,6 @@
 # Spec: <feature title> (#<issue>)
-<!-- ≤800 words, verify-enforced. Drafted by the Leader WITH the human; approved at Gate 1. -->
+<!-- ≤800 words, verify-enforced. Drafted and self-checked by the Leader (Gate 1); the human
+     reads it in the PR (Gate 2). Design calls go under Assumptions so they are visible there. -->
 
 ## Problem
 (one paragraph: what changes for the user)
@@ -30,7 +31,7 @@
 - AC3 [e2e] WHEN <invalid input at entry point> THE SYSTEM SHALL <failure behavior>
 - AC4 [property] FOR ALL <input> THE SYSTEM SHALL <invariant / round-trip law>
 
-<!-- GATE 1 CHECKLIST (human + Leader, before "approved"):
+<!-- GATE 1 CHECKLIST (Leader self-check, before labelling `approved`):
      [ ] every criterion is EARS-shaped, tagged, numbered, and names only pub behavior
      [ ] required levels present (integration if cross-module, e2e if entry point: happy + failure)
      [ ] no [unverified] assumption is load-bearing; spike questions answered or carried

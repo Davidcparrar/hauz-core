@@ -1,6 +1,7 @@
 # SDD Harness — Rust template
 
-Spec-driven, test-first Claude Code harness with two human gates (spec approval, PR merge),
+Spec-driven, test-first Claude Code harness with one human gate (the PR merge; the Leader
+self-checks specs at Gate 1 and the human reads them in the PR),
 GitHub issues as the roadmap, and Rust rules enforced by lints instead of prose.
 Simplified from [harness-sdd](https://github.com/Davidcparrar/harness-sdd): 2 agents,
 3 commands, 1 script, no database, no worktrees, no hooks.
