@@ -8,7 +8,7 @@ exclude = ["features"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95" # rig-core's MSRV (decided 2026-10-03, docs/decisions.md #23)
 license = "MIT"
 
 # One version per dependency; members use `{ workspace = true }`.
@@ -28,6 +28,9 @@ mail-parser = "0.11"
 pdf-extract = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# LLM client + its schema crate (decided 2026-10-03, docs/decisions.md #23)
+rig-core = { version = "0.43", default-features = false, features = ["rustls", "reqwest"] }
+schemars = "1"
 sha2 = "0.11"
 time = { version = "0.3", features = ["parsing", "formatting", "macros", "serde"] }
 
