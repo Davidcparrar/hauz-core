@@ -38,9 +38,11 @@ message), analytics, frontend, mobile.
   decoded; a `message/rfc822` part is one `Document`, not recursed. `MimeType` is a
   lowercase `type/subtype` newtype. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "envelope ⇒ candidate fields"; interface: `trait Extractor: Send +
-  Sync { fn extract(&self, &Envelope) -> Result<Extraction, Error> }` (`dyn`-safe),
+  Sync { fn extract<'a>(&'a self, &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> }`
+  (`dyn`-safe, async like `BillStore`),
   `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
-  `Option<Field<T>>`), `Field<T> { value, confidence: Confidence (0..=100), span: Span
+  `Option<Field<T>>`; `is_complete(min_confidence: u8)` ⇔ amount at ≥ threshold plus vendor
+  plus period), `Field<T> { value, confidence: Confidence (0..=100), span: Span
   { source: Source { Text, Html, Document(i) }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document } }>`), `merge(Vec<Extraction>)` (highest confidence per
   field, notes unioned; ties by structural value order, then span — so it is
@@ -50,19 +52,21 @@ message), analytics, frontend, mobile.
   document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
   `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`), `Chain`
   (`Chain::new(Vec<Box<dyn Extractor>>)`, itself an `Extractor`: runs each in order, first
-  `Err` wins, else `merge`). Binaries hold one `Chain`; an LLM-backed impl slots in behind
-  the same trait.
+  `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`: runs
+  `primary`, returns it when complete, else `merge`s it with `secondary`; either `Err`
+  propagates). Binaries hold one `Chain`; an LLM-backed impl (#23) slots in as `Escalate`'s
+  secondary.
 - `store` — owns persistence; interface: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
-  `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via boxed futures,
-  `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
+  `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via `BoxFuture`, the
+  crate-root alias re-exported here; `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
   other modules' tests.
 - `ingest` — owns the pipeline; interface: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
   st: &dyn BillStore) -> Result<Outcome, Error>` (`Send` future), `Outcome { Created(BillId),
   Duplicate(BillId) }`, `raw_hash(&[u8]) -> RawHash` (SHA-256), `EXTRACTED_MIN_CONFIDENCE`
   (50), `Error { Email, Extract, Store, Bill }` (`#[from]` each). Order: hash →
   `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = lowercase
-  hex of the hash. `Status::Extracted` iff amount (confidence ≥ 50), vendor and period are
-  all present, else `NeedsReview` keeping every present field. A parse or extractor `Err`
+  hex of the hash. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
+  `NeedsReview` keeping every present field. A parse or extractor `Err`
   stores nothing; `issued` and `notes` are not persisted.
 
 ## Entry points

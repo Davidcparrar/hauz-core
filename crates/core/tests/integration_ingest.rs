@@ -5,9 +5,13 @@
 mod common;
 
 use common::{Result, TmpDbFile};
-use hauz_core::bill::{Currency, Money, Status, Vendor};
-use hauz_core::extract::TextExtractor;
-use hauz_core::ingest::{Error, Outcome, ingest, raw_hash};
+use hauz_core::bill::{BillingPeriod, Currency, Money, Status, Vendor};
+use hauz_core::email::Envelope;
+use hauz_core::extract::{
+    Confidence, Error as ExtractError, Escalate, Extraction, Extractor, Field, Source, Span,
+    TextExtractor,
+};
+use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Error, Outcome, ingest, raw_hash};
 use hauz_core::store::{BillStore, SqliteStore};
 use time::macros::date;
 
@@ -97,5 +101,70 @@ async fn ac4_malformed_message_is_email_error_and_list_stays_empty() -> Result<(
     let second = ingest(MALFORMED, &TextExtractor, &store).await;
     assert!(matches!(second, Err(Error::Email(_))));
     assert_eq!(store.list().await?.len(), 0);
+    Ok(())
+}
+
+/// Always returns a clone of the fixed extraction it was built with, ignoring the envelope.
+struct Fixed(Extraction);
+
+impl Extractor for Fixed {
+    fn extract<'a>(
+        &'a self,
+        _envelope: &'a Envelope,
+    ) -> hauz_core::BoxFuture<'a, std::result::Result<Extraction, ExtractError>> {
+        let extraction = self.0.clone();
+        Box::pin(async move { Ok(extraction) })
+    }
+}
+
+/// An extraction with only `period` set.
+fn period_only() -> Result<Extraction> {
+    Ok(Extraction {
+        period: Some(Field {
+            value: BillingPeriod::new(date!(2026 - 01 - 01), date!(2026 - 01 - 31))?,
+            confidence: Confidence::new(90)?,
+            span: Span {
+                source: Source::Text,
+                start: 0,
+                end: 0,
+            },
+        }),
+        ..Extraction::default()
+    })
+}
+
+/// AC5: `bill_eml()` (amount, due and vendor, no period) ingested via `Escalate(TextExtractor,
+/// Fixed(period only), EXTRACTED_MIN_CONFIDENCE)` over a `SqliteStore` is stored `Extracted`
+/// with that period; `TextExtractor` alone on the same bytes is stored `NeedsReview` (AC1).
+#[tokio::test]
+async fn ac5_escalate_fills_missing_period_text_extractor_alone_needs_review() -> Result<()> {
+    let raw = common::bill_eml();
+    let period = period_only()?;
+    let expected_period = period.period.clone().map(|field| field.value);
+
+    let db = TmpDbFile::new("ingest-ac5-escalate");
+    let store = SqliteStore::open(&db.path).await?;
+    let escalate = Escalate::new(
+        Box::new(TextExtractor),
+        Box::new(Fixed(period)),
+        EXTRACTED_MIN_CONFIDENCE,
+    );
+
+    let outcome = ingest(&raw, &escalate, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(bill.period(), expected_period.as_ref());
+
+    let plain_db = TmpDbFile::new("ingest-ac5-plain");
+    let plain_store = SqliteStore::open(&plain_db.path).await?;
+    let plain_outcome = ingest(&raw, &TextExtractor, &plain_store).await?;
+    let Outcome::Created(plain_id) = plain_outcome else {
+        return Err(format!("expected Created, got {plain_outcome:?}").into());
+    };
+    let plain_bill = plain_store.get(&plain_id).await?.ok_or("missing bill")?;
+    assert_eq!(plain_bill.status(), Status::NeedsReview);
     Ok(())
 }

@@ -13,16 +13,16 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 const HTML_PDF: &[u8] = include_bytes!("fixtures/html_pdf.eml");
 
-#[test]
-fn ac7_fake_pdf_attachment_from_eml_is_an_error() -> Result<()> {
+#[tokio::test]
+async fn ac7_fake_pdf_attachment_from_eml_is_an_error() -> Result<()> {
     let envelope = Envelope::parse(HTML_PDF)?;
-    let result = PdfTextExtractor.extract(&envelope);
+    let result = PdfTextExtractor.extract(&envelope).await;
     assert!(matches!(result, Err(Error::Pdf { document: 0, .. })));
     Ok(())
 }
 
-#[test]
-fn ac8_seven_bit_mime_message_with_pdf_attachment_extracts_ac1_fields() -> Result<()> {
+#[tokio::test]
+async fn ac8_seven_bit_mime_message_with_pdf_attachment_extracts_ac1_fields() -> Result<()> {
     let lines = ["Total: 1,234.56 EUR", "Due date: 15/10/2026"];
     let pdf_bytes = common::minimal_pdf(&lines);
     let pdf_ascii = String::from_utf8(pdf_bytes)?;
@@ -49,7 +49,7 @@ fn ac8_seven_bit_mime_message_with_pdf_attachment_extracts_ac1_fields() -> Resul
     );
 
     let envelope = Envelope::parse(raw.as_bytes())?;
-    let extraction = PdfTextExtractor.extract(&envelope)?;
+    let extraction = PdfTextExtractor.extract(&envelope).await?;
 
     let amount = extraction.amount.ok_or("expected amount")?;
     assert_eq!(
@@ -65,8 +65,8 @@ fn ac8_seven_bit_mime_message_with_pdf_attachment_extracts_ac1_fields() -> Resul
 /// AC9: `Chain([TextExtractor, PdfTextExtractor])` extracting a 7-bit `multipart/mixed`
 /// message (text part with an amount, PDF part with a due date) equals running the two
 /// extractors separately and `merge`-ing them, with both fields present in the result.
-#[test]
-fn ac9_chain_equals_merge_of_separate_runs() -> Result<()> {
+#[tokio::test]
+async fn ac9_chain_equals_merge_of_separate_runs() -> Result<()> {
     let pdf_bytes = common::minimal_pdf(&["Due date: 15/10/2026"]);
     let pdf_ascii = String::from_utf8(pdf_bytes)?;
 
@@ -93,12 +93,12 @@ fn ac9_chain_equals_merge_of_separate_runs() -> Result<()> {
 
     let envelope = Envelope::parse(raw.as_bytes())?;
 
-    let text = TextExtractor.extract(&envelope)?;
-    let pdf = PdfTextExtractor.extract(&envelope)?;
+    let text = TextExtractor.extract(&envelope).await?;
+    let pdf = PdfTextExtractor.extract(&envelope).await?;
     let expected = merge(vec![text, pdf]);
 
     let chain = Chain::new(vec![Box::new(TextExtractor), Box::new(PdfTextExtractor)]);
-    assert_eq!(chain.extract(&envelope), Ok(expected.clone()));
+    assert_eq!(chain.extract(&envelope).await, Ok(expected.clone()));
 
     let amount = expected.amount.ok_or("expected amount")?;
     assert_eq!(
