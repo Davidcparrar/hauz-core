@@ -74,7 +74,13 @@ message), analytics, frontend, mobile.
   200 with the `Bill` JSON (`BillDraft` shape), 404 for an unknown or malformed id. `main.rs`
   reads `DATABASE_URL` (SQLite path, `sqlite://` prefix tolerated) and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([TextExtractor, PdfTextExtractor])`; untested by design.
-- cli: `hauz ingest <file.eml>` — same pipeline, local file, for dev and replay.
+- cli (`crates/cli`, bin-only, binary `hauz`): `hauz ingest <file.eml> [--db <sqlite path>]`
+  (flag and positional in any order after `ingest`; `--db` defaults to `./hauz.db`) reads the
+  file, then opens `SqliteStore` and runs `Chain([TextExtractor, PdfTextExtractor])` through
+  `ingest`; stdout is exactly `Created <id>` or `Duplicate <id>`. Exit 0 on success, 1 on a
+  runtime error (unreadable file, `ingest::Error`, store; anyhow message on stderr), 2 on a
+  usage error (usage line on stderr); `-h|--help` prints usage on stdout. Args are parsed by
+  hand (no clap); no env configuration. For dev and replaying a bill corpus against a local DB.
 
 ## Storage
 SQLite through sqlx (`sqlite` feature), one file, WAL mode. Durability and "SQLite in S3"
