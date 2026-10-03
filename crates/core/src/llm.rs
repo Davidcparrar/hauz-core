@@ -3,6 +3,7 @@
 //! real `pdftoppm` binary, or the process environment. The extractor that wires these
 //! together is a later feature (#26); this module only owns the edges.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
@@ -11,6 +12,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::BoxFuture;
+use crate::bill::{BillingPeriod, Currency, Money, Vendor};
+use crate::email::Envelope;
+use crate::extract::{
+    self, Confidence, Error as ExtractError, Extraction, Extractor, Field, Note, PdfTextExtractor,
+    Source, Span,
+};
 
 /// One piece of a request sent to an [`LlmClient`]: plain instruction text, a rasterized
 /// page, or a whole PDF document. Which kinds a given provider accepts is a property of the
@@ -327,6 +334,322 @@ fn rasterize_in(
 
 fn rasterizer_err(reason: String) -> Error {
     Error::Rasterizer { reason }
+}
+
+/// How a PDF attachment is delivered to the model: rendered to page images, or sent whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfDelivery {
+    /// One [`Part::Png`] per rasterized page, via [`LlmExtractor`]'s [`Rasterizer`].
+    RasterizedPages,
+    /// One [`Part::Pdf`] carrying the whole document; the rasterizer is never called.
+    Native,
+}
+
+/// Tunables for [`LlmExtractor`]. `Default` is [`PdfDelivery::RasterizedPages`], 4 pages, a
+/// confidence ceiling of 70, and a 20 000-char body truncation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LlmOptions {
+    /// How PDF attachments are delivered to the model.
+    pub delivery: PdfDelivery,
+    /// The most pages rasterized per PDF (only when `delivery` is `RasterizedPages`).
+    pub max_pages: u8,
+    /// A ceiling applied to the model's self-reported confidence: every mapped field's
+    /// [`Confidence`] is `min(reported, max_confidence)`.
+    pub max_confidence: u8,
+    /// The body text (plain or tag-stripped HTML) is truncated to this many `char`s before
+    /// being sent.
+    pub max_body_chars: usize,
+}
+
+impl Default for LlmOptions {
+    fn default() -> Self {
+        Self {
+            delivery: PdfDelivery::RasterizedPages,
+            max_pages: 4,
+            max_confidence: 70,
+            max_body_chars: 20_000,
+        }
+    }
+}
+
+/// The system instruction sent with every request: names the fields, the expected formats,
+/// and asks for an honest confidence rather than a confident-sounding guess.
+const INSTRUCTIONS: &str = "Extract billing data from the attached email body and/or \
+document into JSON matching the schema exactly. Fields: vendor (the billing company's name); \
+amount_minor_units (the total due, as an integer in the currency's smallest unit, e.g. \
+cents); currency (a 3-letter ISO-4217 code — resolve a bare symbol like \"$\" from the \
+surrounding country or language cues rather than assuming USD); period_start and period_end \
+(the billing period's first and last day, ISO-8601 dates); issued (the invoice/issue date, \
+ISO-8601); due (the payment due date, ISO-8601). Use JSON null for any field you cannot find \
+with confidence — never guess a value you are not reasonably sure of. Report your own \
+confidence in 0-100 honestly: near 100 for a clearly stated field, low for a guess.";
+
+/// The private JSON schema a model reply is validated against: every field `required` (but
+/// still nullable), so a model that omits a key fails validation rather than silently
+/// dropping a field we would otherwise treat as "found".
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+struct LlmFields {
+    #[schemars(required)]
+    vendor: Option<String>,
+    #[schemars(required)]
+    amount_minor_units: Option<i64>,
+    #[schemars(required)]
+    currency: Option<String>,
+    #[schemars(required)]
+    period_start: Option<String>,
+    #[schemars(required)]
+    period_end: Option<String>,
+    #[schemars(required)]
+    issued: Option<String>,
+    #[schemars(required)]
+    due: Option<String>,
+    #[schemars(required)]
+    confidence: u8,
+}
+
+/// An [`Extractor`] backed by an [`LlmClient`]: sends the envelope's body and PDF attachments
+/// (rendered per [`LlmOptions::delivery`]) to the model with a JSON schema, and maps the
+/// reply into an [`Extraction`]. Behind [`extract::Escalate`], this is the pass that runs only
+/// when a cheaper extractor leaves a bill short of complete.
+pub struct LlmExtractor {
+    client: Box<dyn LlmClient>,
+    rasterizer: Box<dyn Rasterizer>,
+    options: LlmOptions,
+}
+
+impl fmt::Debug for LlmExtractor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LlmExtractor")
+            .field("options", &self.options)
+            .finish()
+    }
+}
+
+impl LlmExtractor {
+    /// Wraps `client` and `rasterizer` behind the [`Extractor`] trait, tuned by `options`.
+    #[must_use]
+    pub fn new(
+        client: Box<dyn LlmClient>,
+        rasterizer: Box<dyn Rasterizer>,
+        options: LlmOptions,
+    ) -> Self {
+        Self {
+            client,
+            rasterizer,
+            options,
+        }
+    }
+
+    /// Builds the request's parts, in order: the body text (if any), then — per
+    /// `application/pdf` attachment, other mime types skipped — its rendering (rasterized
+    /// pages or the whole document, per [`LlmOptions::delivery`]) followed by its text layer
+    /// when one is present. A rasterizer failure degrades to
+    /// [`extract::Error::Llm`]; a corrupt PDF's text layer propagates
+    /// [`extract::Error::Pdf`] exactly as [`PdfTextExtractor`] would.
+    fn build_parts(&self, envelope: &Envelope) -> Result<Vec<Part>, ExtractError> {
+        let mut parts = Vec::new();
+        let body = body_text(envelope, self.options.max_body_chars);
+        if !body.is_empty() {
+            parts.push(Part::Text(body));
+        }
+
+        for (index, document) in envelope.documents.iter().enumerate() {
+            if document.mime.as_str() != extract::PDF_MIME {
+                continue;
+            }
+            match self.options.delivery {
+                PdfDelivery::RasterizedPages => {
+                    let pages = self
+                        .rasterizer
+                        .rasterize(&document.bytes, self.options.max_pages)
+                        .map_err(ExtractError::Llm)?;
+                    parts.extend(pages.into_iter().map(Part::Png));
+                }
+                PdfDelivery::Native => parts.push(Part::Pdf(document.bytes.clone())),
+            }
+            match PdfTextExtractor::text_layer(&document.bytes) {
+                Ok(Some(layer)) => parts.push(Part::Text(layer)),
+                Ok(None) => {}
+                Err(ExtractError::Pdf { reason, .. }) => {
+                    return Err(ExtractError::Pdf {
+                        document: index,
+                        reason,
+                    });
+                }
+                Err(err @ ExtractError::InvalidConfidence(_)) => return Err(err),
+                // `text_layer` only ever constructs `Error::Pdf`; `InvalidConfidence` and
+                // `Llm` cannot occur here, but `extract::Error` is `#[non_exhaustive]` so
+                // these arms keep the match exhaustive.
+                Err(err @ ExtractError::Llm(_)) => return Err(err),
+            }
+        }
+        Ok(parts)
+    }
+}
+
+impl Extractor for LlmExtractor {
+    /// Builds a request from `envelope` and sends it; an empty request (no body, no PDF
+    /// attachments) short-circuits to the default extraction without calling the client. A
+    /// client failure degrades to the default plus [`Note::LlmUnavailable`]; an unparseable
+    /// reply degrades to the default plus [`Note::LlmMalformed`]. An unsupported
+    /// part/provider combination, a rasterizer failure, or a configuration fault is a
+    /// genuine error.
+    fn extract<'a>(
+        &'a self,
+        envelope: &'a Envelope,
+    ) -> BoxFuture<'a, Result<Extraction, ExtractError>> {
+        Box::pin(async move {
+            let parts = self.build_parts(envelope)?;
+            if parts.is_empty() {
+                return Ok(Extraction::default());
+            }
+
+            let request = LlmRequest {
+                instructions: INSTRUCTIONS.to_owned(),
+                parts,
+                schema: schemars::schema_for!(LlmFields),
+            };
+
+            match self.client.complete(&request).await {
+                Ok(reply) => Ok(map_reply(&reply, self.options.max_confidence)),
+                Err(Error::Client { .. }) => {
+                    let mut extraction = Extraction::default();
+                    extraction.notes.insert(Note::LlmUnavailable);
+                    Ok(extraction)
+                }
+                Err(
+                    err @ (Error::Unsupported { .. }
+                    | Error::Rasterizer { .. }
+                    | Error::Config { .. }),
+                ) => Err(ExtractError::Llm(err)),
+            }
+        })
+    }
+}
+
+/// The body sent as the leading `Part::Text`: `text` verbatim, else tag-stripped `html`,
+/// truncated to `max_chars` (by `char`, not byte). Empty (both absent, or empty after
+/// truncation) becomes an empty string, so the caller can skip the part entirely.
+fn body_text(envelope: &Envelope, max_chars: usize) -> String {
+    let full = match (&envelope.text, &envelope.html) {
+        (Some(text), _) => text.clone(),
+        (None, Some(html)) => extract::strip_html(html),
+        (None, None) => String::new(),
+    };
+    full.chars().take(max_chars).collect()
+}
+
+/// Strips an optional leading ```` ```json ```` or ```` ``` ```` fence line and a matching
+/// trailing ```` ``` ```` line, as some models wrap an otherwise schema-conformant reply in a
+/// markdown code fence.
+fn strip_fence(reply: &str) -> &str {
+    let trimmed = reply.trim();
+    let Some(after_open) = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+    else {
+        return trimmed;
+    };
+    let after_open = after_open.trim_start_matches(['\r', '\n']);
+    after_open
+        .strip_suffix("```")
+        .map_or(after_open, str::trim_end)
+}
+
+/// `[year]-[month]-[day]`, the only date shape this module accepts from a reply.
+const DATE_FORMAT: &[time::format_description::FormatItem<'_>] =
+    time::macros::format_description!("[year]-[month]-[day]");
+
+/// Parses `raw` as an ISO-8601 `[year]-[month]-[day]` date, or `None` when it does not match.
+fn parse_date(raw: &str) -> Option<time::Date> {
+    time::Date::parse(raw, DATE_FORMAT).ok()
+}
+
+/// Maps a client's raw reply into an [`Extraction`]: strips a markdown fence and parses the
+/// schema JSON; an unparseable reply degrades to the default extraction plus
+/// [`Note::LlmMalformed`]. Each present field's [`Confidence`] is the reply's self-reported
+/// confidence, capped at `max_confidence`; every field shares one zero-length
+/// [`Source::Model`] [`Span`]. A field whose domain constructor rejects the reply's value
+/// (an invalid currency, an empty vendor name, an unparseable date, an inverted period)
+/// becomes `None` rather than failing the whole extraction.
+fn map_reply(reply: &str, max_confidence: u8) -> Extraction {
+    let Ok(fields) = rig_core::serde_json::from_str::<LlmFields>(strip_fence(reply)) else {
+        let mut extraction = Extraction::default();
+        extraction.notes.insert(Note::LlmMalformed);
+        return extraction;
+    };
+
+    let confidence = Confidence::clamped(fields.confidence.min(max_confidence));
+    let span = Span {
+        source: Source::Model,
+        start: 0,
+        end: 0,
+    };
+
+    let amount = fields
+        .amount_minor_units
+        .zip(
+            fields
+                .currency
+                .as_deref()
+                .and_then(|currency| Currency::new(currency).ok()),
+        )
+        .map(|(minor_units, currency)| Field {
+            value: Money::new(minor_units, currency),
+            confidence,
+            span,
+        });
+
+    let vendor = fields
+        .vendor
+        .as_deref()
+        .and_then(|name| Vendor::new(name).ok())
+        .map(|value| Field {
+            value,
+            confidence,
+            span,
+        });
+
+    let period = fields
+        .period_start
+        .as_deref()
+        .and_then(parse_date)
+        .zip(fields.period_end.as_deref().and_then(parse_date))
+        .and_then(|(start, end)| BillingPeriod::new(start, end).ok())
+        .map(|value| Field {
+            value,
+            confidence,
+            span,
+        });
+
+    let issued = fields
+        .issued
+        .as_deref()
+        .and_then(parse_date)
+        .map(|value| Field {
+            value,
+            confidence,
+            span,
+        });
+
+    let due = fields
+        .due
+        .as_deref()
+        .and_then(parse_date)
+        .map(|value| Field {
+            value,
+            confidence,
+            span,
+        });
+
+    Extraction {
+        amount,
+        issued,
+        due,
+        period,
+        vendor,
+        notes: BTreeSet::new(),
+    }
 }
 
 /// The resolved LLM configuration: which provider to use, and which model.

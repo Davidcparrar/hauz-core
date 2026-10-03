@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use crate::BoxFuture;
 use crate::bill::{BillingPeriod, Currency, Money, Vendor};
 use crate::email::Envelope;
+use crate::llm;
 
 /// Errors this module can return. Library code never panics; it returns one of these.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -30,6 +31,12 @@ pub enum Error {
         /// The error's or panic's message.
         reason: String,
     },
+    /// [`crate::llm::LlmExtractor`] hit a configuration fault it cannot degrade from: an
+    /// unsupported part/provider combination or a rasterizer failure. A client failure or a
+    /// malformed reply degrades to [`Note::LlmUnavailable`]/[`Note::LlmMalformed`] instead of
+    /// this variant.
+    #[error(transparent)]
+    Llm(llm::Error),
 }
 
 /// A caveat attached to an [`Extraction`] alongside its fields: something the extractor is
@@ -43,6 +50,12 @@ pub enum Note {
         /// The index into `Envelope::documents` of the attachment with no text layer.
         document: usize,
     },
+    /// [`crate::llm::LlmExtractor`]'s client call failed (e.g. a network error); the
+    /// extraction degrades to the default rather than failing outright.
+    LlmUnavailable,
+    /// [`crate::llm::LlmExtractor`]'s client replied with text that did not parse as the
+    /// requested JSON schema.
+    LlmMalformed,
 }
 
 /// A validated confidence score in `0..=100`.
@@ -62,6 +75,14 @@ impl Confidence {
         }
     }
 
+    /// Clamps `value` into `0..=100` instead of rejecting it: for sources that must never
+    /// fail construction, e.g. an LLM's self-reported confidence or a caller-supplied
+    /// ceiling ([`crate::llm::LlmOptions::max_confidence`]).
+    #[must_use]
+    pub(crate) fn clamped(value: u8) -> Self {
+        Self(value.min(100))
+    }
+
     /// The validated score.
     #[must_use]
     pub fn get(&self) -> u8 {
@@ -79,6 +100,9 @@ pub enum Source {
     Html,
     /// The `n`th attachment's extracted text (future PDF extractor).
     Document(usize),
+    /// A field [`crate::llm::LlmExtractor`] produced from a model reply, not anchored to a
+    /// byte range: [`Span::start`] and [`Span::end`] are both `0`.
+    Model,
 }
 
 /// A byte range `[start, end)` into the scanned string named by `source`.
@@ -533,7 +557,7 @@ fn vendor_of(sender: &str) -> Result<Option<Field<Vendor>>, Error> {
 // PdfTextExtractor: scans the text layer of `application/pdf` attachments.
 // ---------------------------------------------------------------------------------------
 
-const PDF_MIME: &str = "application/pdf";
+pub(crate) const PDF_MIME: &str = "application/pdf";
 
 /// Extracts amount and date candidates from `application/pdf` attachments' text layer,
 /// using the same scanner as [`TextExtractor`]. Never sets `period` or `vendor` (PDF text
@@ -566,6 +590,9 @@ impl PdfTextExtractor {
                     });
                 }
                 Err(err @ Error::InvalidConfidence(_)) => return Err(err),
+                // `text_layer` only ever constructs `Error::Pdf`; `Llm` cannot occur here, but
+                // `Error` is `#[non_exhaustive]` so this arm keeps the match exhaustive.
+                Err(err @ Error::Llm(_)) => return Err(err),
             }
         }
         Ok(merge(parts))
@@ -1086,7 +1113,7 @@ const BLOCK_TAGS: [&str; 20] = [
 
 /// Drops HTML tags: block/cell closing tags and `<br>` become a single whitespace character;
 /// every other tag is dropped outright. Decodes a fixed entity table.
-fn strip_html(html: &str) -> String {
+pub(crate) fn strip_html(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut i = 0;
     while i < html.len() {
