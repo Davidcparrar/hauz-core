@@ -43,6 +43,23 @@ pub(crate) fn bare_needs_review_bill(id: &str) -> Result<Bill> {
     Ok(Bill::try_from(draft)?)
 }
 
+/// `ingest`'s AC1 fixture: a 7-bit `text/plain` message from `billing@acme-power.example`,
+/// body `Total: 1,234.56 EUR` / `Due date: 15/10/2026` — so `TextExtractor` finds an anchored
+/// amount and due date, plus a sender-domain vendor, but never a period (no shipped extractor
+/// sets one).
+pub(crate) fn bill_eml() -> Vec<u8> {
+    "From: billing@acme-power.example\r\n\
+     Subject: Your bill\r\n\
+     Date: Mon, 1 Jan 2024 12:00:00 +0000\r\n\
+     Content-Type: text/plain\r\n\
+     Content-Transfer-Encoding: 7bit\r\n\
+     \r\n\
+     Total: 1,234.56 EUR\r\n\
+     Due date: 15/10/2026\r\n"
+        .as_bytes()
+        .to_vec()
+}
+
 /// A unique tmp-file path for a `SqliteStore` under test, so parallel tests never collide.
 fn tmp_db_path(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
