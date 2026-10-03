@@ -8,6 +8,7 @@ pub mod bill;
 pub mod email;
 pub mod extract;
 pub mod ingest;
+pub mod llm;
 pub mod store;
 
 /// A future boxed for a dyn-compatible async trait: no `async-trait`, no `unsafe`. Used by

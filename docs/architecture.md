@@ -10,8 +10,7 @@
 - Stay honest about uncertainty: what the extractor cannot read is stored as
   `needs_review`, never guessed and never dropped.
 
-Out of scope here: fetching mail (a webhook, Gmail push, or SES hands us the raw
-message), analytics, frontend, mobile.
+Out of scope: fetching mail (a webhook or push hands us the raw message), analytics, frontend, mobile.
 
 ## Crate map
 ```
@@ -46,8 +45,7 @@ message), analytics, frontend, mobile.
   { source: Source { Text, Html, Document(i) }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document } }>`), `merge(Vec<Extraction>)` (highest confidence per
   field, notes unioned; ties by structural value order, then span — so it is
-  order-insensitive and idempotent), `TextExtractor` (heuristic scanner over `text` and
-  tag-stripped `html`: anchored amounts/dates, sender-domain vendor; no regex),
+  order-insensitive and idempotent), `TextExtractor` (heuristic scanner over `text` and tag-stripped `html`; no regex),
   `PdfTextExtractor` (same scanner over the text layer of each `application/pdf`
   document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
   `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`), `Chain`
@@ -60,6 +58,12 @@ message), analytics, frontend, mobile.
   `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async via `BoxFuture`, the
   crate-root alias re-exported here; `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` fake for
   other modules' tests.
+- `llm` — owns the LLM-side system edges as injectable traits (the extractor itself is #26): `trait LlmClient { fn complete(&self, &LlmRequest) -> BoxFuture<Result<String,
+  Error>> }` over `LlmRequest { instructions, parts: Vec<Part { Text, Png, Pdf }>, schema:
+  schemars::Schema }`, `RigClient::new(Provider, model)` (the only code importing rig-core; `Provider { Ollama { base_url }, Anthropic { api_key, base_url }, OpenAi { .. } }`, keys redacted in `Debug`; a `Pdf` part on Ollama is `Error::Unsupported`),
+  `trait Rasterizer { fn rasterize(&self, pdf, max_pages) -> Result<Vec<Vec<u8>>> }` with
+  `Pdftoppm::new(dpi)` shelling out to poppler's `pdftoppm` in a temp dir, and
+  `Config::from_env(get)` reading `HAUZ_LLM_PROVIDER` (`ollama|anthropic|openai`), `HAUZ_LLM_MODEL`, the provider's key or base URL; `Error { Client, Unsupported, Rasterizer, Config }`.
 - `ingest` — owns the pipeline; interface: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
   st: &dyn BillStore) -> Result<Outcome, Error>` (`Send` future), `Outcome { Created(BillId),
   Duplicate(BillId) }`, `raw_hash(&[u8]) -> RawHash` (SHA-256), `EXTRACTED_MIN_CONFIDENCE`
@@ -84,18 +88,15 @@ message), analytics, frontend, mobile.
   `ingest`; stdout is exactly `Created <id>` or `Duplicate <id>`. Exit 0 on success, 1 on a
   runtime error (unreadable file, `ingest::Error`, store; anyhow message on stderr), 2 on a
   usage error (usage line on stderr); `-h|--help` prints usage on stdout. Args are parsed by
-  hand (no clap); no env configuration. For dev and replaying a bill corpus against a local DB.
+  hand (no clap); no env configuration.
 
 ## Storage
 SQLite through sqlx (`sqlite` feature), one file, WAL mode. Durability and "SQLite in S3"
 come from a Litestream sidecar replicating the WAL to a bucket and restoring on boot;
-the application code never talks to S3. Turso stays possible later behind `BillStore`
-(sqlx has no libSQL driver, so it would be a second store impl, not a config switch).
+the application code never talks to S3. Turso stays possible as a second `BillStore` impl (sqlx has no libSQL driver).
 
 ## Risks / debt
-- Extraction quality on real bills is unknown until we have a corpus; the heuristic
-  extractor is a baseline.
-- Scanned/image-only PDFs need OCR or a vision model — deferred until a real sample
-  demands it; today they surface as a `NoTextLayer` note. A PDF with a slightly wrong
-  xref also reads as empty (pdf-extract loses data silently rather than erroring).
+- The real corpus (7 bills, 2026-10-03) all lands `NeedsReview`: vendor = sender domain,
+  `$` read as `USD` where it meant `COP`, no period. The LLM pass (#26) targets exactly that;
+  DIAN e-invoice zips (UBL XML) deserve an exact extractor (#27). A PDF with a slightly wrong xref reads as empty (pdf-extract loses data silently).
 - Single-writer SQLite suits one ingest service; a second writer means Turso or Postgres.
