@@ -823,14 +823,14 @@ fn match_currency_before(text: &str, before: usize) -> Option<CurrencyMatch> {
     let prefix = text.get(..before)?;
     let trimmed_end = trim_one_trailing_space(prefix);
 
-    if let Some(c) = text.get(..trimmed_end)?.chars().next_back() {
-        if let Some(code) = symbol_currency(c) {
-            return Some(CurrencyMatch {
-                code: code.to_string(),
-                start: trimmed_end - c.len_utf8(),
-                end: before,
-            });
-        }
+    if let Some(c) = text.get(..trimmed_end)?.chars().next_back()
+        && let Some(code) = symbol_currency(c)
+    {
+        return Some(CurrencyMatch {
+            code: code.to_string(),
+            start: trimmed_end - c.len_utf8(),
+            end: before,
+        });
     }
     let start = trimmed_end.checked_sub(3)?;
     let candidate = text.get(start..trimmed_end)?;
@@ -851,21 +851,21 @@ fn match_currency_before(text: &str, before: usize) -> Option<CurrencyMatch> {
 }
 
 fn skip_one_space(s: &str) -> (usize, &str) {
-    if let Some(c) = s.chars().next() {
-        if c == ' ' || c == '\u{00A0}' {
-            let len = c.len_utf8();
-            return (len, s.get(len..).unwrap_or(""));
-        }
+    if let Some(c) = s.chars().next()
+        && (c == ' ' || c == '\u{00A0}')
+    {
+        let len = c.len_utf8();
+        return (len, s.get(len..).unwrap_or(""));
     }
     (0, s)
 }
 
 /// Byte offset marking the end of `s` with at most one trailing space/NBSP removed.
 fn trim_one_trailing_space(s: &str) -> usize {
-    if let Some(c) = s.chars().next_back() {
-        if c == ' ' || c == '\u{00A0}' {
-            return s.len() - c.len_utf8();
-        }
+    if let Some(c) = s.chars().next_back()
+        && (c == ' ' || c == '\u{00A0}')
+    {
+        return s.len() - c.len_utf8();
     }
     s.len()
 }
