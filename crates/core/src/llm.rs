@@ -573,7 +573,7 @@ fn parse_date(raw: &str) -> Option<time::Date> {
 /// (an invalid currency, an empty vendor name, an unparseable date, an inverted period)
 /// becomes `None` rather than failing the whole extraction.
 fn map_reply(reply: &str, max_confidence: u8) -> Extraction {
-    let Ok(fields) = rig_core::serde_json::from_str::<LlmFields>(strip_fence(reply)) else {
+    let Ok(fields) = serde_json::from_str::<LlmFields>(strip_fence(reply)) else {
         let mut extraction = Extraction::default();
         extraction.notes.insert(Note::LlmMalformed);
         return extraction;
