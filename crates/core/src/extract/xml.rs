@@ -78,46 +78,79 @@ fn find_open_tag<'a>(haystack: &'a str, from: usize, local: &str) -> Option<Open
     }
 }
 
-/// Finds the first element matching `local` whose ancestor chain (root first) all appear,
-/// nested, before it — searched linearly with no awareness of sibling scope, so a later
-/// sibling's descendant can still match if no earlier one does (true of every field #27's
-/// fixtures need; a general-purpose parser is explicitly out of scope). Returns the decoded
-/// text content, its byte span, and the opening tag's attributes.
-pub(crate) fn find_element(xml: &str, parents: &[&str], local: &str) -> Option<Element> {
-    let mut pos = 0usize;
-    for parent in parents {
-        let tag = find_open_tag(xml, pos, parent)?;
-        pos = tag.end;
-    }
-    let tag = find_open_tag(xml, pos, local)?;
-    if tag.self_closing {
-        return Some(Element {
-            text: String::new(),
-            start: tag.end,
-            end: tag.end,
-            attrs: tag.attrs.to_string(),
-        });
-    }
-    let rest = xml.get(tag.end..)?;
-    let mut cursor = 0usize;
+/// Finds the byte offset where the closing tag of an element named `local` starts, scanning
+/// `haystack` from `from` (just past that element's opening tag). Nested same-named elements
+/// are balanced; self-closing ones neither open nor close a level.
+fn find_close(haystack: &str, from: usize, local: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = from;
     loop {
-        let window = rest.get(cursor..)?;
-        let rel = window.find("</")?;
-        let abs = cursor + rel;
-        let after = rest.get(abs + 2..)?;
-        let rel_gt = after.find('>')?;
-        let name = after.get(..rel_gt)?;
-        if local_name(name) == local {
-            let body = rest.get(..abs)?;
-            return Some(Element {
-                text: decode_text(body),
-                start: tag.end,
-                end: tag.end + abs,
-                attrs: tag.attrs.to_string(),
-            });
+        let tag_open = i + haystack.get(i..)?.find('<')?;
+        let rest = haystack.get(tag_open..)?;
+        let tag_end = tag_open + rest.find('>')? + 1;
+        let inner = haystack.get(tag_open + 1..tag_end.checked_sub(1)?)?;
+        if let Some(closing) = inner.strip_prefix('/') {
+            if local_name(closing.trim()) == local {
+                match depth.checked_sub(1) {
+                    Some(lower) => depth = lower,
+                    None => return Some(tag_open),
+                }
+            }
+        } else if !inner.starts_with(['?', '!']) && !inner.trim_end().ends_with('/') {
+            let name_end = inner.find(char::is_whitespace).unwrap_or(inner.len());
+            if local_name(inner.get(..name_end)?) == local {
+                depth = depth.checked_add(1)?;
+            }
         }
-        cursor = abs + 2 + rel_gt + 1;
+        i = if inner.starts_with(['?', '!']) {
+            tag_open + 1
+        } else {
+            tag_end
+        };
     }
+}
+
+/// An element located by [`locate`]: its opening tag and the end of its body (equal to the
+/// tag's end when self-closing).
+struct Located<'a> {
+    tag: OpenTag<'a>,
+    body_end: usize,
+}
+
+/// Finds the first element named `local` opening in `xml[from..limit]` at or
+/// after `from`, and the end of its body; the body never extends past `limit`.
+fn locate<'a>(xml: &'a str, from: usize, limit: usize, local: &str) -> Option<Located<'a>> {
+    let scoped = xml.get(..limit)?;
+    let tag = find_open_tag(scoped, from, local)?;
+    let body_end = if tag.self_closing {
+        tag.end
+    } else {
+        find_close(scoped, tag.end, local)?
+    };
+    Some(Located { tag, body_end })
+}
+
+/// Finds the first element matching `local` inside the chain of `parents` (root first), each
+/// searched only within the body of the previous match (a self-closing parent has an empty
+/// body), so a step never matches past the end of its parent. Returns the decoded text
+/// content, its byte span, and the opening tag's attributes.
+pub(crate) fn find_element(xml: &str, parents: &[&str], local: &str) -> Option<Element> {
+    let mut from = 0usize;
+    let mut limit = xml.len();
+    for parent in parents {
+        let found = locate(xml, from, limit, parent)?;
+        from = found.tag.end;
+        limit = found.body_end;
+    }
+    let found = locate(xml, from, limit, local)?;
+    let start = found.tag.end;
+    let body = xml.get(start..found.body_end)?;
+    Some(Element {
+        text: decode_text(body),
+        start,
+        end: found.body_end,
+        attrs: found.tag.attrs.to_string(),
+    })
 }
 
 /// One attribute's value (`name="value"`) in a raw attribute-text slice (as captured by

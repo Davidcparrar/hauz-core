@@ -829,7 +829,13 @@ async fn ac4_corrupt_zip_attachment_is_zip_error() -> Result<()> {
     };
 
     let result = XmlInvoiceExtractor.extract(&envelope).await;
-    assert!(matches!(result, Err(Error::Zip { document: 1, .. })));
+    assert!(matches!(
+        result,
+        Err(Error::Zip {
+            document: 1,
+            source: hauz_core::zip::Error::Malformed { .. }
+        })
+    ));
     Ok(())
 }
 
@@ -903,5 +909,43 @@ async fn ac5_malformed_field_values_omit_only_that_field() -> Result<()> {
     assert!(extraction.vendor.is_some());
     assert!(extraction.issued.is_some());
     assert!(extraction.due.is_some());
+    Ok(())
+}
+
+/// Wraps `invoice` in an `AttachedDocument` CDATA, followed by `outer`, as a one-entry zip
+/// envelope.
+fn wrapped_invoice_envelope(invoice: &str, outer: &str) -> Result<Envelope> {
+    let xml = format!(
+        "<AttachedDocument xmlns:cbc=\"c\"><cac:Attachment><![CDATA[{invoice}]]></cac:Attachment>{outer}</AttachedDocument>"
+    );
+    let bytes = common::build_stored_zip(&[("a.xml".to_string(), xml.into_bytes())]);
+    zip_envelope(&bytes)
+}
+
+/// AC2: a customer's `PartyTaxScheme/RegistrationName` after a supplier that only has
+/// `PartyLegalEntity` never becomes the vendor.
+#[tokio::test]
+async fn ac2_customer_registration_name_is_not_vendor() -> Result<()> {
+    let invoice = "<Invoice><cac:AccountingSupplierParty><cac:Party><cac:PartyLegalEntity>\
+        <cbc:RegistrationName>Supplier SA</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party>\
+        </cac:AccountingSupplierParty><cac:AccountingCustomerParty><cac:Party><cac:PartyTaxScheme>\
+        <cbc:RegistrationName>Customer SA</cbc:RegistrationName></cac:PartyTaxScheme></cac:Party>\
+        </cac:AccountingCustomerParty></Invoice>";
+    let envelope = wrapped_invoice_envelope(invoice, "")?;
+
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Supplier SA")?);
+    Ok(())
+}
+
+/// AC2: a `DueDate` outside the `Invoice` (in the wrapping `AttachedDocument`) is ignored.
+#[tokio::test]
+async fn ac2_outer_due_date_is_ignored() -> Result<()> {
+    let invoice = "<Invoice><cbc:IssueDate>2026-01-02</cbc:IssueDate></Invoice>";
+    let envelope = wrapped_invoice_envelope(invoice, "<cbc:DueDate>2026-02-03</cbc:DueDate>")?;
+
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    assert!(extraction.due.is_none());
     Ok(())
 }
