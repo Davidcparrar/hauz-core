@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AttachedDocument xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>SYN-0001</cbc:ID>
+  <cac:Attachment><cac:ExternalReference><cbc:Description><![CDATA[
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cac:InvoiceLine><cbc:ID>1</cbc:ID><cbc:LineExtensionAmount currencyID="COP">1000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 1</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>2</cbc:ID><cbc:LineExtensionAmount currencyID="COP">2000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 2</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>3</cbc:ID><cbc:LineExtensionAmount currencyID="COP">3000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 3</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>4</cbc:ID><cbc:LineExtensionAmount currencyID="COP">4000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 4</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>5</cbc:ID><cbc:LineExtensionAmount currencyID="COP">5000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 5</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>6</cbc:ID><cbc:LineExtensionAmount currencyID="COP">6000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 6</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>7</cbc:ID><cbc:LineExtensionAmount currencyID="COP">7000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 7</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>8</cbc:ID><cbc:LineExtensionAmount currencyID="COP">8000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 8</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>9</cbc:ID><cbc:LineExtensionAmount currencyID="COP">9000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 9</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>10</cbc:ID><cbc:LineExtensionAmount currencyID="COP">10000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 10</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>11</cbc:ID><cbc:LineExtensionAmount currencyID="COP">11000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 11</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>12</cbc:ID><cbc:LineExtensionAmount currencyID="COP">12000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 12</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>13</cbc:ID><cbc:LineExtensionAmount currencyID="COP">13000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 13</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>14</cbc:ID><cbc:LineExtensionAmount currencyID="COP">14000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 14</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>15</cbc:ID><cbc:LineExtensionAmount currencyID="COP">15000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 15</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>16</cbc:ID><cbc:LineExtensionAmount currencyID="COP">16000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 16</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>17</cbc:ID><cbc:LineExtensionAmount currencyID="COP">17000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 17</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>18</cbc:ID><cbc:LineExtensionAmount currencyID="COP">18000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 18</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>19</cbc:ID><cbc:LineExtensionAmount currencyID="COP">19000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 19</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>20</cbc:ID><cbc:LineExtensionAmount currencyID="COP">20000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 20</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>21</cbc:ID><cbc:LineExtensionAmount currencyID="COP">21000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 21</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>22</cbc:ID><cbc:LineExtensionAmount currencyID="COP">22000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 22</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>23</cbc:ID><cbc:LineExtensionAmount currencyID="COP">23000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 23</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>24</cbc:ID><cbc:LineExtensionAmount currencyID="COP">24000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 24</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>25</cbc:ID><cbc:LineExtensionAmount currencyID="COP">25000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 25</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>26</cbc:ID><cbc:LineExtensionAmount currencyID="COP">26000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 26</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>27</cbc:ID><cbc:LineExtensionAmount currencyID="COP">27000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 27</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>28</cbc:ID><cbc:LineExtensionAmount currencyID="COP">28000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 28</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>29</cbc:ID><cbc:LineExtensionAmount currencyID="COP">29000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 29</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>30</cbc:ID><cbc:LineExtensionAmount currencyID="COP">30000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 30</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>31</cbc:ID><cbc:LineExtensionAmount currencyID="COP">31000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 31</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>32</cbc:ID><cbc:LineExtensionAmount currencyID="COP">32000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 32</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>33</cbc:ID><cbc:LineExtensionAmount currencyID="COP">33000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 33</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>34</cbc:ID><cbc:LineExtensionAmount currencyID="COP">34000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 34</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>35</cbc:ID><cbc:LineExtensionAmount currencyID="COP">35000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 35</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>36</cbc:ID><cbc:LineExtensionAmount currencyID="COP">36000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 36</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>37</cbc:ID><cbc:LineExtensionAmount currencyID="COP">37000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 37</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>38</cbc:ID><cbc:LineExtensionAmount currencyID="COP">38000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 38</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>39</cbc:ID><cbc:LineExtensionAmount currencyID="COP">39000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 39</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:InvoiceLine><cbc:ID>40</cbc:ID><cbc:LineExtensionAmount currencyID="COP">40000.00</cbc:LineExtensionAmount><cac:Item><cbc:Description>Synthetic line item 40</cbc:Description></cac:Item></cac:InvoiceLine>
+  <cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="COP">820000.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>
+]]></cbc:Description></cac:ExternalReference></cac:Attachment>
+</AttachedDocument>

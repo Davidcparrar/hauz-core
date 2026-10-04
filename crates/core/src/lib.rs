@@ -10,6 +10,7 @@ pub mod extract;
 pub mod ingest;
 pub mod llm;
 pub mod store;
+pub mod zip;
 
 /// A future boxed for a dyn-compatible async trait: no `async-trait`, no `unsafe`. Used by
 /// [`store::BillStore`] and [`extract::Extractor`], whose implementations box an `async move`
