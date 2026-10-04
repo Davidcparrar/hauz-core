@@ -7,8 +7,8 @@ reader turning an archive's bytes into entries (name + inflated bytes, CRC-check
 builds the UBL extractor on it; no bill behaviour changes here.
 
 ## Non-goals
-- No zip64, encryption, data descriptors (flag bit 3), methods other than 0/8, multi-disk or
-  writing: each is `Unsupported`, never guessed around.
+- No zip64, encryption, data descriptors (flag bit 3) or methods other than 0/8: each is
+  `Unsupported`, never guessed around. Multi-disk and writing: out of scope.
 - No `Extractor`; `extract`, `ingest` and the binaries are untouched (#27).
 - No new dependency: `flate2` is in the tree via `lopdf`, but declaring it is a dependency
   decision; the spike proved a std-only inflate suffices.
@@ -52,7 +52,7 @@ they index slices freely; reimplement under the lints.
 
 ## Test plan
 Files: `crates/core/tests/unit_zip.rs` (AC1–AC7), `crates/core/tests/property_zip.rs`
-(AC8–AC9). Fixtures: run `python3 features/32/make_fixtures.py` from the repo root once; it
+(AC8–AC9). Fixtures: `python3 features/32/make_fixtures.py` from the repo root once; it
 writes `crates/core/tests/fixtures/zip/{stored,small,invoice,bzip2,empty}.zip` plus the
 plain `ad000000001.xml` / `ad000000001.pdf` that `invoice.zip`'s entries equal. Commit them.
 No integration/e2e: one module, no entry point.
