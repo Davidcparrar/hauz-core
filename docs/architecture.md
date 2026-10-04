@@ -8,7 +8,7 @@
 - Persist every record durably and idempotently (same email twice ⇒ one bill).
 - Stay honest: what the extractor cannot read is stored `needs_review`, never guessed.
 
-Out of scope: fetching mail (a webhook hands over the raw message), analytics, frontend, mobile.
+Out of scope: fetching mail (a webhook hands over the raw message), analytics, frontend.
 
 ## Crate map
 ```
@@ -35,17 +35,19 @@ Out of scope: fetching mail (a webhook hands over the raw message), analytics, f
   lowercase `type/subtype` newtype. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "envelope ⇒ candidate fields": `trait Extractor: Send +
   Sync { fn extract<'a>(&'a self, &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> }`
-  (`dyn`-safe, async like `BillStore`),
+  (`dyn`-safe),
   `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
   `Option<Field<T>>`; `is_complete(min_confidence: u8)` ⇔ amount at ≥ threshold plus vendor
   plus period), `Field<T> { value, confidence: Confidence (0..=100), span: Span
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
-  Llm(llm::Error) }`), `merge(Vec<Extraction>)` (highest confidence per
+  Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
   field, notes unioned; ties by value then span: order-insensitive, idempotent), `TextExtractor` (heuristic scanner over `text` and tag-stripped `html`; no regex; a bare `$` is no currency, `COP$`/`US$` are),
   `PdfTextExtractor` (same scanner over the text layer of each `application/pdf`
   document via `text_layer(&[u8]) -> Result<Option<String>>`, pdf-extract under
-  `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`), `Chain`
+  `catch_unwind`; image-only ⇒ `NoTextLayer` note, corrupt ⇒ `Error::Pdf`),
+  `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` amount, supplier, dates,
+  period at confidence 100, scoped under `Invoice`; bad zip ⇒ `Error::Zip`), `Chain`
   (`Chain::new(Vec<Box<dyn Extractor>>)`, itself an `Extractor`: runs each in order, first
   `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`: runs
   `primary`, returns it when complete, else `merge`s it with `secondary`; either `Err`
@@ -78,16 +80,16 @@ Out of scope: fetching mail (a webhook hands over the raw message), analytics, f
   Extractor>)`, `pub fn router(state: AppState) -> axum::Router`, `MAX_BODY_BYTES` (25 MiB ⇒ 413). `POST /v1/ingest/email` takes raw RFC 5322 bytes (any `Content-Type`): 201 created / 200 duplicate, body `{"id"}`, 400 on `ingest::Error::{Email,
   Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: 200 with the `Bill` JSON (`BillDraft` shape), else 404. `main.rs`
   reads `DATABASE_URL` (SQLite path, `sqlite://` prefix tolerated) and `BIND_ADDR` (default
-  `127.0.0.1:8080`), runs `Chain([TextExtractor, PdfTextExtractor])`, wrapped in `Escalate(chain,
+  `127.0.0.1:8080`), runs `Chain([XmlInvoiceExtractor, TextExtractor, PdfTextExtractor])`, wrapped in `Escalate(chain,
   LlmExtractor(RigClient, Pdftoppm::new(150)), EXTRACTED_MIN_CONFIDENCE)` when `llm::Config::from_env` is `Some` (config error ⇒ abort). Untested by design.
 - cli (`crates/cli`, bin-only, binary `hauz`): `hauz ingest <file.eml> [--db <sqlite path>]`
-  (any order; `--db` defaults to `./hauz.db`) reads the file and the LLM env as the server (config error ⇒ exit 1 before the DB opens), opens `SqliteStore`, runs the same extractor through `ingest`; stdout is `Created <id>` or `Duplicate <id>`. Exit 0; 1 on a runtime error (message on stderr); 2 on a usage error (usage on stderr, also `-h|--help`). Args parsed by hand.
+  (any order; `--db` defaults to `./hauz.db`) reads the file and LLM env (config error ⇒ exit 1 before the DB opens), runs the server's extractor through `ingest`; stdout is `Created <id>` or `Duplicate <id>`. Exit 0; 1 on a runtime error (message on stderr); 2 on a usage error (usage on stderr, also `-h|--help`). Args parsed by hand.
 
 ## Storage
-SQLite through sqlx, one file, WAL mode; a Litestream sidecar replicates the WAL to a bucket (the app never talks to S3). Turso remains possible as another `BillStore`.
+SQLite through sqlx, one file, WAL mode; a Litestream sidecar replicates the WAL to a bucket. Turso remains possible as another `BillStore`.
 
 ## Risks / debt
 - The real corpus (7 bills, 2026-10-03) lands `NeedsReview` heuristically (vendor = sender
   domain, no amount for four bare-`$` Colombian bills, no period); the LLM pass made 2
-  `Extracted`. DIAN e-invoice zips get an exact UBL extractor over `zip` (#27). A slightly wrong PDF xref reads as empty.
+  `Extracted`. A slightly wrong PDF xref reads as empty.
 - Single-writer SQLite suits one ingest service; a second writer means Turso/Postgres.

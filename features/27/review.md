@@ -18,3 +18,19 @@ REQUIRED CHANGES:
 - Passed: AC1–AC10 present at their tagged levels in the named files, pub API only; both
   chains `[XmlInvoiceExtractor, TextExtractor, PdfTextExtractor]`; `Error::Zip` carries the
   index; checked amount scaling, `.get`-based slicing; no manifest/dependency/docs change.
+
+## Cycle 2 — 2026-10-03, reviewer on 51b953f
+VERDICT: APPROVE
+verify.sh: `verify: ALL GREEN`
+
+- Cycle 1 changes resolved: `find_element` confines every step, `Invoice` included, to the
+  matched parent's body (`locate`/`find_close`); regression tests
+  `ac2_customer_registration_name_is_not_vendor`, `ac2_outer_due_date_is_ignored`; AC4
+  asserts `source: Malformed { .. }`.
+- Pub-API probes (temporary, deleted): outer `SenderParty`/`IssueDate`/`DueDate`/
+  `PaymentDueDate` ignored; self-closing supplier `<cac:Party/>` leaks no customer name;
+  nested `cac:Party` stays in the supplier block; 11 malformed inputs (`<` at EOF, unclosed
+  tag, `</`, unterminated comment, multibyte) return `Ok`, no panic or hang. Every loop
+  advances its index; all slicing is `.get`.
+- Non-blocking: a self-closing `<cac:PaymentMeans/>` before a real one makes `due` fall back
+  to `Invoice/DueDate` (first-match); unlikely in DIAN files.
