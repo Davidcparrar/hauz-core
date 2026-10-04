@@ -9,7 +9,7 @@ use hauz_core::bill::{BillingPeriod, Currency, Money, Status, Vendor};
 use hauz_core::email::Envelope;
 use hauz_core::extract::{
     Chain, Confidence, Error as ExtractError, Escalate, Extraction, Extractor, Field,
-    PdfTextExtractor, Source, Span, TextExtractor,
+    PdfTextExtractor, Source, Span, TextExtractor, XmlInvoiceExtractor,
 };
 use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Error, Outcome, ingest, raw_hash};
 use hauz_core::llm::{
@@ -21,6 +21,8 @@ use time::macros::date;
 const PLAIN: &[u8] = include_bytes!("fixtures/plain.eml");
 const MALFORMED: &[u8] = include_bytes!("fixtures/malformed.eml");
 const CO_BARE_DOLLAR: &[u8] = include_bytes!("fixtures/co_bare_dollar.eml");
+const DIAN_FULL_EML: &[u8] = include_bytes!("fixtures/ubl/dian_full.eml");
+const DIAN_NO_PERIOD_EML: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.eml");
 
 /// Lowercase hex encoding, test-local (the crate's own encoder is private).
 fn to_hex(bytes: &[u8]) -> String {
@@ -314,5 +316,62 @@ async fn ac5_bare_dollar_bill_escalates_to_model_amount() -> Result<()> {
         bill.amount(),
         Some(&Money::new(123_456_700, Currency::new("COP")?))
     );
+    Ok(())
+}
+
+/// AC7 (#27): `dian_full.eml` ingested through `Chain([XmlInvoiceExtractor, TextExtractor,
+/// PdfTextExtractor])` is stored `Extracted` with the AC1 vendor, amount, period and due;
+/// `dian_no_period.eml` is stored `NeedsReview` with AC2's amount, vendor and due, no period.
+#[tokio::test]
+async fn ac7_dian_zip_chain_extracted_and_needs_review() -> Result<()> {
+    let chain = Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ]);
+
+    let db = TmpDbFile::new("ingest-27-ac7-full");
+    let store = SqliteStore::open(&db.path).await?;
+    let outcome = ingest(DIAN_FULL_EML, &chain, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.vendor(),
+        Some(&Vendor::new("Acme & Luz S.A.S. E.S.P.")?)
+    );
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(18_435_000, Currency::new("COP")?))
+    );
+    assert_eq!(
+        bill.period(),
+        Some(&BillingPeriod::new(
+            date!(2026 - 08 - 01),
+            date!(2026 - 08 - 31)
+        )?)
+    );
+    assert_eq!(bill.due(), Some(date!(2026 - 09 - 25)));
+
+    let db = TmpDbFile::new("ingest-27-ac7-no-period");
+    let store = SqliteStore::open(&db.path).await?;
+    let outcome = ingest(DIAN_NO_PERIOD_EML, &chain, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::NeedsReview);
+    assert_eq!(
+        bill.vendor(),
+        Some(&Vendor::new("Gas Natural Ejemplo S.A.")?)
+    );
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(9_950, Currency::new("USD")?))
+    );
+    assert_eq!(bill.due(), Some(date!(2026 - 09 - 30)));
+    assert_eq!(bill.period(), None);
     Ok(())
 }

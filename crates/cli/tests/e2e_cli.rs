@@ -7,8 +7,13 @@ mod common;
 use std::ffi::OsString;
 
 use assert_cmd::Command;
-use hauz_core::bill::{BillId, Status};
+use hauz_core::bill::{BillId, Currency, Money, Status};
 use hauz_core::store::{BillStore, SqliteStore};
+
+// `include_bytes!` of the `core` crate's own fixtures (#27): `cli` has no corpus of its own
+// for DIAN zips, and the spec forbids duplicating them under `crates/cli/tests/fixtures/`.
+const DIAN_FULL_EML: &[u8] = include_bytes!("../../core/tests/fixtures/ubl/dian_full.eml");
+const DIAN_CORRUPT_EML: &[u8] = include_bytes!("../../core/tests/fixtures/ubl/dian_corrupt.eml");
 
 #[tokio::test]
 async fn ac1_creates_new_bill() -> common::Result<()> {
@@ -242,5 +247,67 @@ async fn ac8_llm_client_failure_degrades_to_needs_review_exit_0() -> common::Res
         .await?
         .ok_or("missing bill")?;
     assert_eq!(bill.status(), Status::NeedsReview);
+    Ok(())
+}
+
+/// AC8 (#27): `hauz ingest dian_full.eml --db <tmp>` exits 0, prints `Created <id>`, and
+/// leaves an `Extracted` bill with the AC1 amount.
+#[tokio::test]
+async fn ac8_dian_full_eml_creates_extracted_bill() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let eml = dir.join("dian_full.eml");
+    std::fs::write(&eml, DIAN_FULL_EML)?;
+    let db = dir.join("a.db");
+    let hash = common::hash_hex(DIAN_FULL_EML);
+
+    let output = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg(&eml)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("Created {hash}\n")
+    );
+    assert!(output.stderr.is_empty());
+
+    let store = SqliteStore::open(&db).await?;
+    let bill = store
+        .get(&BillId::new(&hash)?)
+        .await?
+        .ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(18_435_000, Currency::new("COP")?))
+    );
+    Ok(())
+}
+
+/// AC9 (#27): `hauz ingest dian_corrupt.eml --db <tmp>` (a truncated DIAN zip attachment)
+/// exits 1, writes stderr, and stores nothing.
+#[tokio::test]
+async fn ac9_dian_corrupt_eml_exits_1_stores_nothing() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let eml = dir.join("dian_corrupt.eml");
+    std::fs::write(&eml, DIAN_CORRUPT_EML)?;
+    let db = dir.join("a.db");
+
+    let output = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg(&eml)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
+    assert!(common::ids(&db).await?.is_empty());
     Ok(())
 }
