@@ -479,10 +479,10 @@ impl LlmExtractor {
                     });
                 }
                 Err(err @ ExtractError::InvalidConfidence(_)) => return Err(err),
-                // `text_layer` only ever constructs `Error::Pdf`; `InvalidConfidence` and
-                // `Llm` cannot occur here, but `extract::Error` is `#[non_exhaustive]` so
-                // these arms keep the match exhaustive.
-                Err(err @ ExtractError::Llm(_)) => return Err(err),
+                // `text_layer` only ever constructs `Error::Pdf`; `InvalidConfidence`,
+                // `Llm` and `Zip` cannot occur here, but `extract::Error` is
+                // `#[non_exhaustive]` so these arms keep the match exhaustive.
+                Err(err @ (ExtractError::Llm(_) | ExtractError::Zip { .. })) => return Err(err),
             }
         }
         Ok(parts)

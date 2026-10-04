@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AttachedDocument xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>SYN-27</cbc:ID>
+  <cbc:IssueDate>2026-09-02</cbc:IssueDate>
+  <cac:SenderParty><cac:PartyTaxScheme><cbc:RegistrationName>Decoy Sender S.A.S.</cbc:RegistrationName></cac:PartyTaxScheme></cac:SenderParty>
+  <cac:Attachment><cac:ExternalReference><cbc:Description><![CDATA[
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:cbc" xmlns:cac="urn:cac">
+  <cbc:ID>ACME-0001</cbc:ID>
+  <cbc:IssueDate>2026-09-01</cbc:IssueDate>
+  <cbc:DueDate>2026-09-20</cbc:DueDate>
+  <cac:InvoicePeriod><cbc:StartDate>2026-08-01</cbc:StartDate><cbc:EndDate>2026-08-31</cbc:EndDate></cac:InvoicePeriod>
+  <cac:AccountingSupplierParty><cac:Party>
+    <cac:PartyName><cbc:Name>Acme Luz</cbc:Name></cac:PartyName>
+    <cac:PartyTaxScheme><cbc:RegistrationName>Acme &amp; Luz S.A.S. E.S.P.</cbc:RegistrationName></cac:PartyTaxScheme>
+    <cac:PartyLegalEntity><cbc:RegistrationName>Acme Luz S.A.S. E.S.P.</cbc:RegistrationName></cac:PartyLegalEntity>
+  </cac:Party></cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty><cac:Party>
+    <cac:PartyTaxScheme><cbc:RegistrationName>Cliente Ejemplo</cbc:RegistrationName></cac:PartyTaxScheme>
+  </cac:Party></cac:AccountingCustomerParty>
+  <cac:PaymentMeans><cbc:ID>1</cbc:ID><cbc:PaymentDueDate>2026-09-25</cbc:PaymentDueDate></cac:PaymentMeans>
+  <cac:LegalMonetaryTotal>
+    <cbc:LineExtensionAmount currencyID="COP">154916.00</cbc:LineExtensionAmount>
+    <cbc:TaxInclusiveAmount currencyID="COP">184350.00</cbc:TaxInclusiveAmount>
+    <cbc:PayableAmount currencyID="COP">184350.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+  <cac:InvoiceLine><cbc:ID>1</cbc:ID><cbc:LineExtensionAmount currencyID="COP">154916.00</cbc:LineExtensionAmount></cac:InvoiceLine>
+</Invoice>
+]]></cbc:Description></cac:ExternalReference></cac:Attachment>
+</AttachedDocument>

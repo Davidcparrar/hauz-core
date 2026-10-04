@@ -6,6 +6,9 @@
 //! a hand-written scanner over the text body and a tag-stripped HTML body. PDF text and an
 //! LLM-backed implementation slot in later behind the same trait.
 
+mod ubl;
+mod xml;
+
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
@@ -13,6 +16,9 @@ use crate::BoxFuture;
 use crate::bill::{BillingPeriod, Currency, Money, Vendor};
 use crate::email::Envelope;
 use crate::llm;
+use crate::zip;
+
+pub use ubl::XmlInvoiceExtractor;
 
 /// Errors this module can return. Library code never panics; it returns one of these.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -37,6 +43,17 @@ pub enum Error {
     /// this variant.
     #[error(transparent)]
     Llm(llm::Error),
+    /// The `application/zip`/`application/x-zip-compressed` attachment at `document` could
+    /// not be read by [`crate::zip::read`] (decision #5 precedent: a corrupt attachment is
+    /// surfaced, not silently filed).
+    #[error("zip attachment {document}: {source}")]
+    Zip {
+        /// The index into `Envelope::documents` of the failing attachment.
+        document: usize,
+        /// The underlying zip error.
+        #[source]
+        source: zip::Error,
+    },
 }
 
 /// A caveat attached to an [`Extraction`] alongside its fields: something the extractor is
@@ -594,9 +611,10 @@ impl PdfTextExtractor {
                     });
                 }
                 Err(err @ Error::InvalidConfidence(_)) => return Err(err),
-                // `text_layer` only ever constructs `Error::Pdf`; `Llm` cannot occur here, but
-                // `Error` is `#[non_exhaustive]` so this arm keeps the match exhaustive.
-                Err(err @ Error::Llm(_)) => return Err(err),
+                // `text_layer` only ever constructs `Error::Pdf`; `Llm`/`Zip` cannot occur
+                // here, but `Error` is `#[non_exhaustive]` so these arms keep the match
+                // exhaustive.
+                Err(err @ (Error::Llm(_) | Error::Zip { .. })) => return Err(err),
             }
         }
         Ok(merge(parts))

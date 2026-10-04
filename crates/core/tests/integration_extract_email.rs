@@ -4,14 +4,18 @@
 
 mod common;
 
+use hauz_core::bill::{Currency, Money, Vendor};
 use hauz_core::email::Envelope;
-use hauz_core::extract::{Chain, Error, Extractor, PdfTextExtractor, TextExtractor, merge};
+use hauz_core::extract::{
+    Chain, Error, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor, merge,
+};
 use time::macros::date;
 
 /// Boxed so any error type propagates with `?`; tests never unwrap or expect.
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 const HTML_PDF: &[u8] = include_bytes!("fixtures/html_pdf.eml");
+const DIAN_FULL_EML: &[u8] = include_bytes!("fixtures/ubl/dian_full.eml");
 
 #[tokio::test]
 async fn ac7_fake_pdf_attachment_from_eml_is_an_error() -> Result<()> {
@@ -107,5 +111,30 @@ async fn ac9_chain_equals_merge_of_separate_runs() -> Result<()> {
     );
     let due = expected.due.ok_or("expected due")?;
     assert_eq!(due.value, date!(2026 - 10 - 15));
+    Ok(())
+}
+
+/// AC6 (#27): `dian_full.eml` parsed by `Envelope::parse` and handed to
+/// `XmlInvoiceExtractor` yields the AC1 fields (amount, vendor, issued, due, period).
+#[tokio::test]
+async fn ac6_dian_full_eml_extracts_ac1_fields() -> Result<()> {
+    let envelope = Envelope::parse(DIAN_FULL_EML)?;
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(18_435_000, Currency::new("COP")?));
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Acme & Luz S.A.S. E.S.P.")?);
+
+    let issued = extraction.issued.ok_or("expected issued")?;
+    assert_eq!(issued.value, date!(2026 - 09 - 01));
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 09 - 25));
+
+    let period = extraction.period.ok_or("expected period")?;
+    assert_eq!(period.value.start(), date!(2026 - 08 - 01));
+    assert_eq!(period.value.end(), date!(2026 - 08 - 31));
     Ok(())
 }

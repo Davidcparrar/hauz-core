@@ -1,9 +1,9 @@
 //! `hauz ingest <file.eml> [--db <sqlite path>]`: local dev/replay entry point. Reads one raw
 //! message from disk and runs the same pipeline as `crates/server`
-//! (`Chain([TextExtractor, PdfTextExtractor])`, escalating to an `LlmExtractor` when
-//! `HAUZ_LLM_PROVIDER` is set, over a `SqliteStore`), printing the outcome and bill id on one
-//! line. Untested in isolation by design; behavior is covered end-to-end via `tests/e2e_cli.rs`
-//! (`assert_cmd`).
+//! (`Chain([XmlInvoiceExtractor, TextExtractor, PdfTextExtractor])`, escalating to an
+//! `LlmExtractor` when `HAUZ_LLM_PROVIDER` is set, over a `SqliteStore`), printing the
+//! outcome and bill id on one line. Untested in isolation by design; behavior is covered
+//! end-to-end via `tests/e2e_cli.rs` (`assert_cmd`).
 
 mod args;
 
@@ -12,7 +12,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context;
-use hauz_core::extract::{Chain, Escalate, Extractor, PdfTextExtractor, TextExtractor};
+use hauz_core::extract::{
+    Chain, Escalate, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor,
+};
 use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Outcome, ingest};
 use hauz_core::llm::{Config, LlmExtractor, LlmOptions, Pdftoppm, RigClient};
 use hauz_core::store::SqliteStore;
@@ -51,10 +53,15 @@ async fn run_ingest(path: &Path, db: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `None` (no `HAUZ_LLM_PROVIDER`) is today's `Chain([TextExtractor, PdfTextExtractor])`;
-/// `Some(config)` wraps it in `Escalate` with an `LlmExtractor` as the secondary.
+/// `None` (no `HAUZ_LLM_PROVIDER`) is today's `Chain([XmlInvoiceExtractor, TextExtractor,
+/// PdfTextExtractor])`; `Some(config)` wraps it in `Escalate` with an `LlmExtractor` as the
+/// secondary.
 fn build_extractor(config: Option<Config>) -> Box<dyn Extractor> {
-    let chain = Chain::new(vec![Box::new(TextExtractor), Box::new(PdfTextExtractor)]);
+    let chain = Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ]);
     let Some(config) = config else {
         return Box::new(chain);
     };

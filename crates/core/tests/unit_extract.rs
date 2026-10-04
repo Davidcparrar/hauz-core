@@ -9,7 +9,7 @@ use hauz_core::bill::{BillingPeriod, Currency, Money, Vendor};
 use hauz_core::email::{Document, Envelope, MimeType};
 use hauz_core::extract::{
     Chain, Confidence, Error, Escalate, Extraction, Extractor, Field, Note, PdfTextExtractor,
-    Source, Span, TextExtractor, merge,
+    Source, Span, TextExtractor, XmlInvoiceExtractor, merge,
 };
 use time::macros::date;
 
@@ -22,6 +22,27 @@ const FR_SPACE: &str = include_str!("fixtures/extract/fr_space.txt");
 const ES_TABLE: &str = include_str!("fixtures/extract/es_table.html");
 const NOISE: &str = include_str!("fixtures/extract/noise.txt");
 const CO_BARE_DOLLAR: &str = include_str!("fixtures/extract/co_bare_dollar.txt");
+
+const DIAN_FULL_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_full.zip");
+const DIAN_NO_PERIOD_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.zip");
+const NOT_INVOICE_ZIP: &[u8] = include_bytes!("fixtures/ubl/not_invoice.zip");
+const DIAN_FULL_XML: &str = include_str!("fixtures/ubl/dian_full.xml");
+
+/// Wraps `bytes` as a single `application/zip` document in an otherwise-empty envelope.
+fn zip_envelope(bytes: &[u8]) -> Result<Envelope> {
+    Ok(Envelope {
+        subject: None,
+        sender: "facturacion@acme-luz.example".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents: vec![Document {
+            mime: MimeType::new("application/zip")?,
+            filename: None,
+            bytes: bytes.to_vec(),
+        }],
+    })
+}
 
 /// An otherwise-empty envelope with just a sender and, optionally, a text/html body.
 fn envelope(sender: &str, text: Option<&str>, html: Option<&str>) -> Envelope {
@@ -680,5 +701,251 @@ async fn ac4_escalate_propagates_secondary_err_when_primary_incomplete() -> Resu
 
     let result = escalate.extract(&envelope).await;
     assert_eq!(result, Err(Error::InvalidConfidence(101)));
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------------------
+// XmlInvoiceExtractor (#27): exact fields from DIAN e-invoice zip attachments.
+// -----------------------------------------------------------------------------------------
+
+/// AC1: `dian_full.zip` as `application/zip` yields the AC1 fields at confidence 100, each
+/// span landing on the matching element body in the entry's text, notes empty.
+#[tokio::test]
+async fn ac1_dian_full_zip_exact_fields() -> Result<()> {
+    let envelope = zip_envelope(DIAN_FULL_ZIP)?;
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(18_435_000, Currency::new("COP")?));
+    assert_eq!(amount.confidence.get(), 100);
+    assert_eq!(amount.span.source, Source::Document(0));
+    assert_eq!(
+        &DIAN_FULL_XML[amount.span.start..amount.span.end],
+        "184350.00"
+    );
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Acme & Luz S.A.S. E.S.P.")?);
+    assert_eq!(vendor.confidence.get(), 100);
+    assert_eq!(
+        &DIAN_FULL_XML[vendor.span.start..vendor.span.end],
+        "Acme &amp; Luz S.A.S. E.S.P."
+    );
+
+    let issued = extraction.issued.ok_or("expected issued")?;
+    assert_eq!(issued.value, date!(2026 - 09 - 01));
+    assert_eq!(
+        &DIAN_FULL_XML[issued.span.start..issued.span.end],
+        "2026-09-01"
+    );
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 09 - 25));
+    assert_eq!(&DIAN_FULL_XML[due.span.start..due.span.end], "2026-09-25");
+
+    let period = extraction.period.ok_or("expected period")?;
+    assert_eq!(period.value.start(), date!(2026 - 08 - 01));
+    assert_eq!(period.value.end(), date!(2026 - 08 - 31));
+    assert_eq!(period.span.source, Source::Document(0));
+    let period_text = &DIAN_FULL_XML[period.span.start..period.span.end];
+    assert!(period_text.contains("2026-08-01"));
+    assert!(period_text.contains("2026-08-31"));
+
+    assert!(extraction.notes.is_empty());
+    Ok(())
+}
+
+/// AC2: `dian_no_period.zip` yields USD 99.50, the legal-entity vendor, issued/due, no
+/// period; `is_complete(50)` is false (no period).
+#[tokio::test]
+async fn ac2_dian_no_period_zip_partial_fields() -> Result<()> {
+    let envelope = zip_envelope(DIAN_NO_PERIOD_ZIP)?;
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    assert!(!extraction.is_complete(50));
+    assert_eq!(extraction.period, None);
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(9_950, Currency::new("USD")?));
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Gas Natural Ejemplo S.A.")?);
+
+    let issued = extraction.issued.ok_or("expected issued")?;
+    assert_eq!(issued.value, date!(2026 - 09 - 10));
+
+    let due = extraction.due.ok_or("expected due")?;
+    assert_eq!(due.value, date!(2026 - 09 - 30));
+    Ok(())
+}
+
+/// AC3: no zip document, or the only zip's root is `CreditNote` (`not_invoice.zip`), yields
+/// `Extraction::default()`.
+#[tokio::test]
+async fn ac3_no_invoice_root_is_default() -> Result<()> {
+    let no_zip = Envelope {
+        subject: None,
+        sender: "facturacion@acme-luz.example".to_string(),
+        date: None,
+        text: Some("no attachment here".to_string()),
+        html: None,
+        documents: Vec::new(),
+    };
+    assert_eq!(
+        XmlInvoiceExtractor.extract(&no_zip).await?,
+        Extraction::default()
+    );
+
+    let only_credit_note = zip_envelope(NOT_INVOICE_ZIP)?;
+    assert_eq!(
+        XmlInvoiceExtractor.extract(&only_credit_note).await?,
+        Extraction::default()
+    );
+    Ok(())
+}
+
+/// AC4: a `text/plain` document 0 plus `dian_full.zip` minus its last 10 bytes at document 1
+/// is `Err(Error::Zip { document: 1, .. })`.
+#[tokio::test]
+async fn ac4_corrupt_zip_attachment_is_zip_error() -> Result<()> {
+    let truncated = &DIAN_FULL_ZIP[..DIAN_FULL_ZIP.len() - 10];
+    let envelope = Envelope {
+        subject: None,
+        sender: "facturacion@acme-luz.example".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents: vec![
+            Document {
+                mime: MimeType::new("text/plain")?,
+                filename: None,
+                bytes: b"not a zip".to_vec(),
+            },
+            Document {
+                mime: MimeType::new("application/zip")?,
+                filename: None,
+                bytes: truncated.to_vec(),
+            },
+        ],
+    };
+
+    let result = XmlInvoiceExtractor.extract(&envelope).await;
+    assert!(matches!(
+        result,
+        Err(Error::Zip {
+            document: 1,
+            source: hauz_core::zip::Error::Malformed { .. }
+        })
+    ));
+    Ok(())
+}
+
+/// Builds a one-entry stored zip from `DIAN_FULL_XML` with `old` replaced by `new` (asserting
+/// the replacement actually matched something, so a typo in the test fails loudly).
+fn mutated_dian_zip(old: &str, new: &str) -> Result<Vec<u8>> {
+    assert!(
+        DIAN_FULL_XML.contains(old),
+        "fixture no longer contains {old:?}"
+    );
+    let mutated = DIAN_FULL_XML.replace(old, new);
+    Ok(common::build_stored_zip(&[(
+        "ad09012345678900001.xml".to_string(),
+        mutated.into_bytes(),
+    )]))
+}
+
+/// AC5: a grammar/constructor failure on one field omits only that field, keeping the rest.
+#[tokio::test]
+async fn ac5_malformed_field_values_omit_only_that_field() -> Result<()> {
+    // Ungrammatical amount (thousands separator): amount omitted, rest kept.
+    let bad_amount = mutated_dian_zip(
+        r#"<cbc:PayableAmount currencyID="COP">184350.00</cbc:PayableAmount>"#,
+        r#"<cbc:PayableAmount currencyID="COP">1,234.56</cbc:PayableAmount>"#,
+    )?;
+    let extraction = XmlInvoiceExtractor
+        .extract(&zip_envelope(&bad_amount)?)
+        .await?;
+    assert_eq!(extraction.amount, None);
+    assert!(extraction.vendor.is_some());
+    assert!(extraction.issued.is_some());
+    assert!(extraction.due.is_some());
+    assert!(extraction.period.is_some());
+
+    // Lowercase currencyID fails `Currency::new`: amount omitted, rest kept.
+    let bad_currency = mutated_dian_zip(
+        r#"<cbc:PayableAmount currencyID="COP">184350.00</cbc:PayableAmount>"#,
+        r#"<cbc:PayableAmount currencyID="cop">184350.00</cbc:PayableAmount>"#,
+    )?;
+    let extraction = XmlInvoiceExtractor
+        .extract(&zip_envelope(&bad_currency)?)
+        .await?;
+    assert_eq!(extraction.amount, None);
+    assert!(extraction.vendor.is_some());
+    assert!(extraction.period.is_some());
+
+    // DMY IssueDate fails the leading-YYYY-MM-DD grammar: issued omitted, rest kept.
+    let bad_issued = mutated_dian_zip(
+        "<cbc:IssueDate>2026-09-01</cbc:IssueDate>",
+        "<cbc:IssueDate>01/09/2026</cbc:IssueDate>",
+    )?;
+    let extraction = XmlInvoiceExtractor
+        .extract(&zip_envelope(&bad_issued)?)
+        .await?;
+    assert_eq!(extraction.issued, None);
+    assert!(extraction.amount.is_some());
+    assert!(extraction.vendor.is_some());
+    assert!(extraction.due.is_some());
+    assert!(extraction.period.is_some());
+
+    // EndDate before StartDate fails `BillingPeriod::new`: period omitted, rest kept.
+    let inverted_period = mutated_dian_zip(
+        "<cac:InvoicePeriod><cbc:StartDate>2026-08-01</cbc:StartDate><cbc:EndDate>2026-08-31</cbc:EndDate></cac:InvoicePeriod>",
+        "<cac:InvoicePeriod><cbc:StartDate>2026-08-31</cbc:StartDate><cbc:EndDate>2026-08-01</cbc:EndDate></cac:InvoicePeriod>",
+    )?;
+    let extraction = XmlInvoiceExtractor
+        .extract(&zip_envelope(&inverted_period)?)
+        .await?;
+    assert_eq!(extraction.period, None);
+    assert!(extraction.amount.is_some());
+    assert!(extraction.vendor.is_some());
+    assert!(extraction.issued.is_some());
+    assert!(extraction.due.is_some());
+    Ok(())
+}
+
+/// Wraps `invoice` in an `AttachedDocument` CDATA, followed by `outer`, as a one-entry zip
+/// envelope.
+fn wrapped_invoice_envelope(invoice: &str, outer: &str) -> Result<Envelope> {
+    let xml = format!(
+        "<AttachedDocument xmlns:cbc=\"c\"><cac:Attachment><![CDATA[{invoice}]]></cac:Attachment>{outer}</AttachedDocument>"
+    );
+    let bytes = common::build_stored_zip(&[("a.xml".to_string(), xml.into_bytes())]);
+    zip_envelope(&bytes)
+}
+
+/// AC2: a customer's `PartyTaxScheme/RegistrationName` after a supplier that only has
+/// `PartyLegalEntity` never becomes the vendor.
+#[tokio::test]
+async fn ac2_customer_registration_name_is_not_vendor() -> Result<()> {
+    let invoice = "<Invoice><cac:AccountingSupplierParty><cac:Party><cac:PartyLegalEntity>\
+        <cbc:RegistrationName>Supplier SA</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party>\
+        </cac:AccountingSupplierParty><cac:AccountingCustomerParty><cac:Party><cac:PartyTaxScheme>\
+        <cbc:RegistrationName>Customer SA</cbc:RegistrationName></cac:PartyTaxScheme></cac:Party>\
+        </cac:AccountingCustomerParty></Invoice>";
+    let envelope = wrapped_invoice_envelope(invoice, "")?;
+
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Supplier SA")?);
+    Ok(())
+}
+
+/// AC2: a `DueDate` outside the `Invoice` (in the wrapping `AttachedDocument`) is ignored.
+#[tokio::test]
+async fn ac2_outer_due_date_is_ignored() -> Result<()> {
+    let invoice = "<Invoice><cbc:IssueDate>2026-01-02</cbc:IssueDate></Invoice>";
+    let envelope = wrapped_invoice_envelope(invoice, "<cbc:DueDate>2026-02-03</cbc:DueDate>")?;
+
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    assert!(extraction.due.is_none());
     Ok(())
 }

@@ -1,12 +1,15 @@
 //! [property] tests for the `extract` module's public API. One file per level per module.
 //! Test fn names carry the spec criterion they satisfy: `acN_<behavior>`.
 
+mod common;
+
 use std::collections::BTreeSet;
 
 use hauz_core::bill::{BillingPeriod, Currency, Money, Vendor};
-use hauz_core::email::Envelope;
+use hauz_core::email::{Document, Envelope, MimeType};
 use hauz_core::extract::{
-    Confidence, Error, Escalate, Extraction, Extractor, Field, Note, Source, Span, merge,
+    Confidence, Error, Escalate, Extraction, Extractor, Field, Note, Source, Span,
+    XmlInvoiceExtractor, merge,
 };
 use proptest::prelude::*;
 
@@ -162,5 +165,41 @@ proptest! {
         let expected = if a.is_complete(t) { a } else { merge(vec![a, b]) };
 
         prop_assert_eq!(result, expected);
+    }
+}
+
+/// Wraps `bytes` as the body of a single `application/zip` document in an otherwise-empty
+/// envelope, built via `MimeType::new` so an invalid mime would be a test bug, not a
+/// production path.
+fn zip_envelope(bytes: Vec<u8>) -> Result<Envelope, hauz_core::email::Error> {
+    Ok(Envelope {
+        subject: None,
+        sender: "billing@example.com".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents: vec![Document {
+            mime: MimeType::new("application/zip")?,
+            filename: None,
+            bytes,
+        }],
+    })
+}
+
+proptest! {
+    /// AC10: for any string of 0..=512 chars stored as the `.xml` entry of a one-entry
+    /// stored zip given as `application/zip`, `XmlInvoiceExtractor::extract` returns `Ok`
+    /// without panicking.
+    #[test]
+    fn ac10_arbitrary_xml_entry_never_panics(
+        text in proptest::collection::vec(any::<char>(), 0..=512)
+            .prop_map(|chars| chars.into_iter().collect::<String>()),
+    ) {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let archive = common::build_stored_zip(&[("entry.xml".to_string(), text.into_bytes())]);
+        let envelope = zip_envelope(archive).expect("valid mime type");
+
+        let result = rt.block_on(XmlInvoiceExtractor.extract(&envelope));
+        prop_assert!(result.is_ok());
     }
 }
