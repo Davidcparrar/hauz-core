@@ -15,6 +15,24 @@ use crate::zip;
 /// `Content-Type` values this extractor opens as a zip archive.
 const ZIP_MIMES: [&str; 2] = ["application/zip", "application/x-zip-compressed"];
 
+/// Generic `Content-Type` some DIAN senders use for the zip; opened only when the attachment's
+/// filename ends in `.zip` (ASCII case-insensitive). No content sniffing: a `.docx` sent as
+/// octet-stream is a zip too, and must not be opened (#36).
+const OCTET_STREAM: &str = "application/octet-stream";
+
+/// True when `document` is a zip this extractor opens: a zip mime, or octet-stream named `*.zip`.
+fn is_zip(document: &crate::email::Document) -> bool {
+    let mime = document.mime.as_str();
+    ZIP_MIMES.contains(&mime)
+        || (mime == OCTET_STREAM
+            && document.filename.as_deref().is_some_and(|name| {
+                name.len()
+                    .checked_sub(4)
+                    .and_then(|start| name.get(start..))
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case(".zip"))
+            }))
+}
+
 /// Every field this extractor sets carries this confidence: the DIAN UBL shape is exact, not
 /// heuristic.
 const CONFIDENCE: u8 = 100;
@@ -31,7 +49,7 @@ impl XmlInvoiceExtractor {
     fn extract_sync(&self, envelope: &Envelope) -> Result<Extraction, Error> {
         let mut parts = Vec::new();
         for (index, document) in envelope.documents.iter().enumerate() {
-            if !ZIP_MIMES.contains(&document.mime.as_str()) {
+            if !is_zip(document) {
                 continue;
             }
             let entries = zip::read(&document.bytes).map_err(|source| Error::Zip {
