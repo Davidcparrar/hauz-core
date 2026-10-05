@@ -949,3 +949,30 @@ async fn ac2_outer_due_date_is_ignored() -> Result<()> {
     assert!(extraction.due.is_none());
     Ok(())
 }
+
+/// Quick #35: a DIAN zip sent as `application/octet-stream` with a `.zip` filename (any
+/// case) is read like `application/zip`; without that filename it stays ignored.
+#[tokio::test]
+async fn octet_stream_zip_with_zip_filename_is_read() -> Result<()> {
+    let mut envelope = zip_envelope(DIAN_FULL_ZIP)?;
+    let document = envelope
+        .documents
+        .first_mut()
+        .ok_or("expected a document")?;
+    document.mime = MimeType::new("application/octet-stream")?;
+    document.filename = Some("z0900219834000260159F826.ZIP".to_string());
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(18_435_000, Currency::new("COP")?));
+
+    let document = envelope
+        .documents
+        .first_mut()
+        .ok_or("expected a document")?;
+    document.filename = Some("z0900219834000260159f826.bin".to_string());
+    assert_eq!(
+        XmlInvoiceExtractor.extract(&envelope).await?,
+        Extraction::default()
+    );
+    Ok(())
+}
