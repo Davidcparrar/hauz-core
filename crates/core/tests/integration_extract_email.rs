@@ -138,3 +138,19 @@ async fn ac6_dian_full_eml_extracts_ac1_fields() -> Result<()> {
     assert_eq!(period.value.end(), date!(2026 - 08 - 31));
     Ok(())
 }
+
+const DIAN_FULL_DISPLAY_NAME_EML: &[u8] = include_bytes!("fixtures/ubl/dian_full_display_name.eml");
+
+#[tokio::test]
+async fn ac7_xml_supplier_beats_display_name() -> Result<()> {
+    let envelope = Envelope::parse(DIAN_FULL_DISPLAY_NAME_EML)?;
+    assert_eq!(envelope.sender_name, Some("Some Other Name".to_string()));
+
+    let chain = Chain::new(vec![Box::new(XmlInvoiceExtractor), Box::new(TextExtractor)]);
+    let extraction = chain.extract(&envelope).await?;
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Acme & Luz S.A.S. E.S.P.")?);
+    assert_eq!(vendor.confidence.get(), 100);
+    Ok(())
+}

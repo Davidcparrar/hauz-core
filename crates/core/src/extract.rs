@@ -369,7 +369,8 @@ const ISSUED_ANCHORS: [&str; 4] = ["invoice date", "date", "rechnungsdatum", "fe
 const ANCHOR_WINDOW: usize = 40;
 
 /// A dependency-free heuristic [`Extractor`]: scans the text body and a tag-stripped HTML
-/// body for an amount, issue date, due date, and sender-domain vendor. Never sets `period`.
+/// body for an amount, issue date, due date, and vendor (the sender's display name, else its
+/// domain). Never sets `period`.
 /// An amount needs an adjacent currency marker: `€`, `£`, a bare 3-letter code, or a code
 /// glued to a `$` sign (`COP$`, `US$`). A bare `$` on its own is never a currency marker, so
 /// the numeral beside it is not an amount either — Colombian pesos and US dollars both use
@@ -388,7 +389,7 @@ impl TextExtractor {
             parts.push(scan(&stripped, Source::Html)?);
         }
         let mut result = merge(parts);
-        result.vendor = vendor_of(&envelope.sender)?;
+        result.vendor = vendor_of(envelope)?;
         Ok(result)
     }
 }
@@ -560,14 +561,21 @@ fn anchor_positions(text: &str, anchors: &[&str]) -> Vec<usize> {
     positions
 }
 
-/// The domain after `@` in `sender`, lowercased, low confidence, span `Text 0..0`. `None`
-/// when `sender` has no `@` or the domain is not a valid [`Vendor`].
-fn vendor_of(sender: &str) -> Result<Option<Field<Vendor>>, Error> {
-    let Some((_, domain)) = sender.split_once('@') else {
-        return Ok(None);
-    };
-    let Ok(vendor) = Vendor::new(&domain.to_lowercase()) else {
-        return Ok(None);
+/// The envelope's `sender_name` verbatim, else the lowercased domain after `@` in `sender`;
+/// low confidence, span `Text 0..0`. `None` when neither is a valid [`Vendor`].
+fn vendor_of(envelope: &Envelope) -> Result<Option<Field<Vendor>>, Error> {
+    let named = envelope.sender_name.as_deref().map(Vendor::new);
+    let vendor = match named {
+        Some(Ok(vendor)) => vendor,
+        _ => {
+            let Some((_, domain)) = envelope.sender.split_once('@') else {
+                return Ok(None);
+            };
+            let Ok(vendor) = Vendor::new(&domain.to_lowercase()) else {
+                return Ok(None);
+            };
+            vendor
+        }
     };
     let confidence = Confidence::new(VENDOR_CONFIDENCE)?;
     Ok(Some(Field {

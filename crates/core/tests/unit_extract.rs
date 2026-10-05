@@ -35,6 +35,7 @@ fn zip_envelope(bytes: &[u8]) -> Result<Envelope> {
     Ok(Envelope {
         subject: None,
         sender: "facturacion@acme-luz.example".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -51,6 +52,7 @@ fn envelope(sender: &str, text: Option<&str>, html: Option<&str>) -> Envelope {
     Envelope {
         subject: None,
         sender: sender.to_string(),
+        sender_name: None,
         date: None,
         text: text.map(str::to_string),
         html: html.map(str::to_string),
@@ -334,6 +336,7 @@ fn envelope_with_documents(sender: &str, documents: Vec<Document>) -> Envelope {
     Envelope {
         subject: None,
         sender: sender.to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -820,6 +823,7 @@ async fn ac3_no_invoice_root_is_default() -> Result<()> {
     let no_zip = Envelope {
         subject: None,
         sender: "facturacion@acme-luz.example".to_string(),
+        sender_name: None,
         date: None,
         text: Some("no attachment here".to_string()),
         html: None,
@@ -846,6 +850,7 @@ async fn ac4_corrupt_zip_attachment_is_zip_error() -> Result<()> {
     let envelope = Envelope {
         subject: None,
         sender: "facturacion@acme-luz.example".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -1030,6 +1035,7 @@ fn documents_envelope(documents: Vec<Document>) -> Envelope {
     Envelope {
         subject: None,
         sender: "facturacion@acme-luz.example".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -1143,5 +1149,43 @@ async fn ac4_non_iso_currency_id_omits_amount() -> Result<()> {
     assert!(extraction.vendor.is_some());
     assert!(extraction.issued.is_some());
     assert!(extraction.period.is_some());
+    Ok(())
+}
+
+/// An envelope with a sender and a display name, no bodies.
+fn named_envelope(sender: &str, name: Option<&str>) -> Envelope {
+    Envelope {
+        sender_name: name.map(str::to_string),
+        ..envelope(sender, None, None)
+    }
+}
+
+#[tokio::test]
+async fn ac5_display_name_is_the_vendor() -> Result<()> {
+    let named = named_envelope("invoice@stripe.example", Some("DeepLearning.AI"));
+    let extraction = TextExtractor.extract(&named).await?;
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("DeepLearning.AI")?);
+    assert_eq!(vendor.confidence.get(), 20);
+    assert_eq!(
+        vendor.span,
+        Span {
+            source: Source::Text,
+            start: 0,
+            end: 0
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn ac6_no_display_name_falls_back_to_lowercased_domain() -> Result<()> {
+    let unnamed = named_envelope("Invoice@Stripe.Example", None);
+    let extraction = TextExtractor.extract(&unnamed).await?;
+
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("stripe.example")?);
+    assert_eq!(vendor.confidence.get(), 20);
     Ok(())
 }
