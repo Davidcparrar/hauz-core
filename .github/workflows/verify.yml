@@ -1,0 +1,41 @@
+# Runs the single verification entry point (.claude/scripts/verify.sh) on every PR and on
+# pushes to main (features/44/spec.md). The toolchain is whatever Cargo.toml's
+# `rust-version` says, so the MSRV lives in exactly one place.
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the workspace rust-version toolchain
+        run: |
+          v=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+          test -n "$v" || { echo "no rust-version in Cargo.toml" >&2; exit 1; }
+          rustup toolchain install "$v" --profile minimal -c rustfmt,clippy
+          rustup default "$v"
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: verify.sh
+        run: .claude/scripts/verify.sh

@@ -48,7 +48,8 @@ Omitted (no spike).
 New entry point outside the crate graph: `.github/workflows/verify.yml`. No change to
 `core`, no pub interface, and no new crate dependency, so no `PROMOTES`. Leader adds a
 one-line `docs/decisions.md` entry (#44: CI = verify.sh, toolchain from `rust-version`,
-rust-cache) and a one-line CI mention in `docs/architecture.md`.
+rust-cache); `docs/architecture.md` is a crate/module map (and at 993/1000 words), so CI
+is not added there.
 
 ## Test plan
 <!-- Not Rust: the constitution's test levels do not apply. The level here is [ci]. Evidence
