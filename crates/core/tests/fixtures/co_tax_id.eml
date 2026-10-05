@@ -1,0 +1,10 @@
+From: facturacion@acme-energia.example
+Subject: Factura
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+Content-Type: text/plain
+Content-Transfer-Encoding: 7bit
+
+Factura de servicios
+NIT 860063875-0
+Total a pagar COP 184.350
+Fecha de vencimiento: 15/10/2026

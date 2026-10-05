@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Error {
-    /// A currency code was not exactly 3 ASCII uppercase letters.
-    #[error("currency must be exactly 3 ASCII uppercase letters")]
+    /// A currency code was not an active ISO 4217 code.
+    #[error("currency must be an active ISO 4217 code")]
     InvalidCurrency,
     /// Two `Money` values in an arithmetic operation did not share a currency.
     #[error("currencies do not match")]
@@ -32,19 +32,39 @@ pub enum Error {
     IncompleteBill,
 }
 
-/// A validated ISO-4217-shaped currency code: exactly 3 ASCII uppercase letters.
-/// Shape only — not checked against the ISO-4217 list.
+/// The active ISO 4217 alphabetic codes (list one, as of 2026), sorted for binary search.
+/// Includes funds codes and the real `X` currencies; excludes `XXX` (no currency), `XTS`
+/// (testing) and withdrawn codes such as `HRK`, `ZWL`, `SLL`.
+const ISO_4217: &[&str] = &[
+    "AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD",
+    "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF",
+    "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF",
+    "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP",
+    "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR",
+    "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT",
+    "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP",
+    "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR",
+    "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB",
+    "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN",
+    "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH",
+    "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAF",
+    "XAG", "XAU", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XUA", "YER", "ZAR",
+    "ZMW", "ZWG",
+];
+
+/// A validated currency code: one of the active ISO 4217 alphabetic codes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String")]
 pub struct Currency(String);
 
 impl Currency {
-    /// Parse, don't validate: accepts exactly 3 ASCII uppercase letters.
+    /// Parse, don't validate: accepts only an active ISO 4217 alphabetic code.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidCurrency`] otherwise.
+    /// Returns [`Error::InvalidCurrency`] when `raw` is not in the active list (wrong case
+    /// or length, a made-up code, `XXX`, `XTS`, or a withdrawn code).
     pub fn new(raw: &str) -> Result<Self, Error> {
-        if raw.chars().count() == 3 && raw.chars().all(|c| c.is_ascii_uppercase()) {
+        if ISO_4217.binary_search(&raw).is_ok() {
             Ok(Self(raw.to_owned()))
         } else {
             Err(Error::InvalidCurrency)
@@ -373,5 +393,20 @@ impl From<Bill> for BillDraft {
             due: bill.due,
             status: bill.status,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ISO_4217;
+
+    #[test]
+    fn table_is_sorted_unique_and_well_shaped() {
+        assert!(ISO_4217.windows(2).all(|w| w[0] < w[1]));
+        assert!(
+            ISO_4217
+                .iter()
+                .all(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_uppercase()))
+        );
     }
 }

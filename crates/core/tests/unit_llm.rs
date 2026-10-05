@@ -498,3 +498,25 @@ async fn ac5_empty_envelope_skips_client_call() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn ac5_non_iso_currency_omits_amount() -> Result<()> {
+    let reply = "{\"vendor\":\"Acme Power\",\"amount_minor_units\":999,\"currency\":\"NIT\",\
+\"period_start\":\"2026-09-01\",\"period_end\":null,\"issued\":\"2026-10-01\",\"due\":null,\
+\"confidence\":40}";
+    let env = envelope(Some("body"), None, Vec::new());
+    let client = Arc::new(FakeClient::new(Ok(reply.to_owned())));
+    let extractor = LlmExtractor::new(
+        Box::new(SharedClient(client)),
+        Box::new(FakeRasterizer(Ok(Vec::new()))),
+        LlmOptions::default(),
+    );
+
+    let extraction = extractor.extract(&env).await?;
+
+    assert_eq!(extraction.amount, None);
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Acme Power")?);
+    assert!(extraction.issued.is_some());
+    Ok(())
+}

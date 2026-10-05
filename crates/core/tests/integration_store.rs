@@ -278,3 +278,48 @@ async fn ac7_open_applies_0002_to_a_0001_only_database() -> Result<()> {
     assert_eq!(bill.status(), hauz_core::bill::Status::Extracted);
     Ok(())
 }
+
+/// AC6 (#38): a row whose stored currency is no longer valid is `Corrupt` with that row's id
+/// from `get`, `find_by_hash` and `list`.
+#[tokio::test]
+async fn ac6_non_iso_stored_currency_is_corrupt() -> Result<()> {
+    let db = TmpDbFile::new("iso-ac6");
+    drop(SqliteStore::open(&db.path).await?);
+    let mut conn = SqliteConnectOptions::new()
+        .filename(&db.path)
+        .connect()
+        .await?;
+    sqlx::query(
+        "INSERT INTO bills (id, hash, vendor, amount_minor, currency, period_start, period_end, \
+         due, status, inserted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("nit-row")
+    .bind([80u8; 32].as_slice())
+    .bind("Acme Power")
+    .bind(1_234i64)
+    .bind("NIT")
+    .bind(time::macros::date!(2026 - 01 - 01))
+    .bind(time::macros::date!(2026 - 01 - 31))
+    .bind(time::macros::date!(2026 - 02 - 15))
+    .bind("extracted")
+    .bind(OffsetDateTime::now_utc())
+    .execute(&mut conn)
+    .await?;
+    drop(conn);
+
+    let store = SqliteStore::open(&db.path).await?;
+    let is_nit_row = |e: &Error| matches!(e, Error::Corrupt { id, .. } if id == "nit-row");
+    let got = store.get(&hauz_core::bill::BillId::new("nit-row")?).await;
+    assert!(got.as_ref().err().is_some_and(is_nit_row), "get: {got:?}");
+    let found = store.find_by_hash(&common::hash(80)).await;
+    assert!(
+        found.as_ref().err().is_some_and(is_nit_row),
+        "find_by_hash: {found:?}"
+    );
+    let listed = store.list().await;
+    assert!(
+        listed.as_ref().err().is_some_and(is_nit_row),
+        "list: {listed:?}"
+    );
+    Ok(())
+}

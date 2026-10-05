@@ -22,6 +22,7 @@ const FR_SPACE: &str = include_str!("fixtures/extract/fr_space.txt");
 const ES_TABLE: &str = include_str!("fixtures/extract/es_table.html");
 const NOISE: &str = include_str!("fixtures/extract/noise.txt");
 const CO_BARE_DOLLAR: &str = include_str!("fixtures/extract/co_bare_dollar.txt");
+const CO_TAX_ID: &str = include_str!("fixtures/extract/co_tax_id.txt");
 
 const DIAN_FULL_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_full.zip");
 const DIAN_NO_PERIOD_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.zip");
@@ -1105,5 +1106,42 @@ async fn ac3_malformed_zip_after_unsupported_is_still_zip_error() -> Result<()> 
             source: hauz_core::zip::Error::Malformed { .. }
         })
     ));
+    Ok(())
+}
+
+/// AC3 (#38): a `NIT` tax id beside a numeral is not money; the real `COP` total wins, and
+/// with no other pair the amount is absent.
+#[tokio::test]
+async fn ac3_tax_id_is_not_an_amount() -> Result<()> {
+    let with_total = envelope("facturacion@acme-energia.example", Some(CO_TAX_ID), None);
+    let extraction = TextExtractor.extract(&with_total).await?;
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(18_435_000, Currency::new("COP")?));
+
+    let only_tax_id = envelope(
+        "facturacion@acme-energia.example",
+        Some("Factura de servicios\nNIT 860063875-0\n"),
+        None,
+    );
+    let extraction = TextExtractor.extract(&only_tax_id).await?;
+    assert_eq!(extraction.amount, None);
+    Ok(())
+}
+
+/// AC4 (#38): a `currencyID` that is not an ISO 4217 code omits the amount and keeps the
+/// other fields.
+#[tokio::test]
+async fn ac4_non_iso_currency_id_omits_amount() -> Result<()> {
+    let bad_currency = mutated_dian_zip(
+        r#"<cbc:PayableAmount currencyID="COP">184350.00</cbc:PayableAmount>"#,
+        r#"<cbc:PayableAmount currencyID="NIT">184350.00</cbc:PayableAmount>"#,
+    )?;
+    let extraction = XmlInvoiceExtractor
+        .extract(&zip_envelope(&bad_currency)?)
+        .await?;
+    assert_eq!(extraction.amount, None);
+    assert!(extraction.vendor.is_some());
+    assert!(extraction.issued.is_some());
+    assert!(extraction.period.is_some());
     Ok(())
 }

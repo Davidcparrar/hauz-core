@@ -17,8 +17,10 @@ use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Outcome, ingest};
 use hauz_core::store::{BillStore, InMemoryStore};
 use proptest::prelude::*;
 
+/// A currency code sampled from a fixed list of active ISO 4217 codes.
 fn arb_currency() -> impl Strategy<Value = Currency> {
-    "[A-Z]{3}".prop_filter_map("valid currency", |raw| Currency::new(&raw).ok())
+    proptest::sample::select(vec!["USD", "EUR", "GBP", "COP", "JPY", "XOF", "COU", "CLF"])
+        .prop_filter_map("valid currency", |raw| Currency::new(raw).ok())
 }
 
 fn arb_vendor() -> impl Strategy<Value = Vendor> {

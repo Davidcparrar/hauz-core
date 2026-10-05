@@ -1,0 +1,4 @@
+Factura de servicios
+NIT 860063875-0
+Total a pagar COP 184.350
+Fecha de vencimiento: 15/10/2026

@@ -44,6 +44,28 @@ fn ac1_rejects_lowercase_two_four_digits_whitespace_and_empty() {
 }
 
 #[test]
+fn ac1_accepts_active_iso_4217_codes() -> Result<()> {
+    for raw in ["USD", "EUR", "GBP", "COP", "JPY", "XOF", "COU"] {
+        assert_eq!(Currency::new(raw)?.as_str(), raw);
+    }
+    Ok(())
+}
+
+#[test]
+fn ac2_rejects_non_iso_codes() {
+    for raw in [
+        "NIT", "ABC", "ZZZ", "HRK", "XXX", "XTS", "usd", "US", "USDD", "",
+    ] {
+        assert_eq!(
+            Currency::new(raw),
+            Err(Error::InvalidCurrency),
+            "input: {raw:?}"
+        );
+    }
+    assert!(serde_json::from_str::<Currency>(r#""NIT""#).is_err());
+}
+
+#[test]
 fn ac2_accepts_any_i64_unchanged() -> Result<()> {
     let usd = Currency::new("USD")?;
     for minor_units in [i64::MIN, -1, 0, 1, i64::MAX] {
