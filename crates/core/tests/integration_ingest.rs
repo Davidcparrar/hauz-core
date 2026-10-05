@@ -22,6 +22,7 @@ const PLAIN: &[u8] = include_bytes!("fixtures/plain.eml");
 const MALFORMED: &[u8] = include_bytes!("fixtures/malformed.eml");
 const CO_BARE_DOLLAR: &[u8] = include_bytes!("fixtures/co_bare_dollar.eml");
 const DIAN_FULL_EML: &[u8] = include_bytes!("fixtures/ubl/dian_full.eml");
+const BILL_WITH_BZIP2_EML: &[u8] = include_bytes!("fixtures/zip/bill_with_bzip2.eml");
 const DIAN_NO_PERIOD_EML: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.eml");
 
 /// Lowercase hex encoding, test-local (the crate's own encoder is private).
@@ -385,5 +386,31 @@ async fn ac8_dian_no_period_chain_is_extracted_with_issued() -> Result<()> {
     assert_eq!(bill.due(), Some(date!(2026 - 09 - 30)));
     assert_eq!(bill.period(), None);
     assert_eq!(bill.issued(), Some(date!(2026 - 09 - 10)));
+    Ok(())
+}
+
+/// AC4 (#36): `bill_with_bzip2.eml` ingested through `Chain([XmlInvoiceExtractor,
+/// TextExtractor, PdfTextExtractor])` is `Created` and stored `NeedsReview` with amount
+/// 1,234.56 EUR and due 2026-10-15: the unsupported archive does not lose the bill.
+#[tokio::test]
+async fn ac4_bill_with_unsupported_zip_is_needs_review_with_text_fields() -> Result<()> {
+    let chain = Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ]);
+    let db = TmpDbFile::new("ingest-36-ac4");
+    let store = SqliteStore::open(&db.path).await?;
+    let outcome = ingest(BILL_WITH_BZIP2_EML, &chain, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::NeedsReview);
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(123_456, Currency::new("EUR")?))
+    );
+    assert_eq!(bill.due(), Some(date!(2026 - 10 - 15)));
     Ok(())
 }

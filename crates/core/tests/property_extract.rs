@@ -203,3 +203,70 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 }
+
+/// Envelope of `layout.len()` documents: `true` slots hold an unsupported zip (descriptor
+/// zip or `bzip2.zip`, chosen by `variant`), `false` slots a `text/plain` document.
+fn unsupported_zip_envelope(layout: &[(bool, bool)]) -> Result<Envelope, hauz_core::email::Error> {
+    let descriptor = common::with_data_descriptor(&common::build_stored_zip(&[(
+        "a.txt".to_string(),
+        b"hello".to_vec(),
+    )]));
+    let mut documents = Vec::new();
+    for &(is_zip, variant) in layout {
+        documents.push(if is_zip {
+            Document {
+                mime: MimeType::new("application/zip")?,
+                filename: None,
+                bytes: if variant {
+                    descriptor.clone()
+                } else {
+                    BZIP2_ZIP.to_vec()
+                },
+            }
+        } else {
+            Document {
+                mime: MimeType::new("text/plain")?,
+                filename: None,
+                bytes: b"just text".to_vec(),
+            }
+        });
+    }
+    Ok(Envelope {
+        subject: None,
+        sender: "billing@example.com".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents,
+    })
+}
+
+const BZIP2_ZIP: &[u8] = include_bytes!("fixtures/zip/bzip2.zip");
+
+proptest! {
+    /// AC8 (#36): for any layout of unsupported zips among `text/plain` documents,
+    /// `XmlInvoiceExtractor` returns `Ok` with no fields and exactly one
+    /// `UnreadableArchive { document: i }` per zip index `i`.
+    #[test]
+    fn ac8_unsupported_zips_yield_one_note_each(
+        layout in proptest::collection::vec(any::<(bool, bool)>(), 0..=8),
+    ) {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let envelope = unsupported_zip_envelope(&layout).expect("valid mime type");
+
+        let extraction = rt
+            .block_on(XmlInvoiceExtractor.extract(&envelope))
+            .expect("unsupported zips never fail");
+
+        let expected = Extraction {
+            notes: layout
+                .iter()
+                .enumerate()
+                .filter(|(_, (is_zip, _))| *is_zip)
+                .map(|(document, _)| Note::UnreadableArchive { document })
+                .collect(),
+            ..Extraction::default()
+        };
+        prop_assert_eq!(extraction, expected);
+    }
+}

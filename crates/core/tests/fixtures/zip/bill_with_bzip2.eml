@@ -1,0 +1,20 @@
+From: billing@acme-power.example
+Subject: Your bill
+Date: Mon, 1 Jan 2024 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b36"
+
+--b36
+Content-Type: text/plain; charset=us-ascii
+
+Total: 1,234.56 EUR
+Due date: 15/10/2026
+--b36
+Content-Type: application/zip; name="archive.zip"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="archive.zip"
+
+UEsDBC4AAAAMAABgQ10MnDkTLAAAAA0AAAAFAAAAYS50eHRCWmg5MUFZJlNZ3uj5vgAAAkEAABA4
+ACAAMM00CpMmOpjxdyRThQkN7o+b4FBLAQIuAy4AAAAMAABgQ10MnDkTLAAAAA0AAAAFAAAAAAAA
+AAAAAACAAQAAAABhLnR4dFBLBQYAAAAAAQABADMAAABPAAAAAAA=
+--b36--

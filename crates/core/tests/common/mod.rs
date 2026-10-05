@@ -147,6 +147,28 @@ pub(crate) fn build_stored_zip(entries: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
+/// A test-built descriptor zip: `zip` (as built by [`build_stored_zip`]) with general-purpose
+/// flag bit 3 (data descriptor) set in every local and central header, so `zip::read` answers
+/// `Unsupported`. Assumes the entry payloads do not contain a header signature.
+pub(crate) fn with_data_descriptor(zip: &[u8]) -> Vec<u8> {
+    let mut out = zip.to_vec();
+    for (signature, flag_offset) in [
+        ([0x50u8, 0x4b, 0x03, 0x04], 6usize),
+        ([0x50u8, 0x4b, 0x01, 0x02], 8usize),
+    ] {
+        let mut i = 0usize;
+        while let Some(window) = zip.get(i..i.saturating_add(4)) {
+            if window == signature
+                && let Some(slot) = out.get_mut(i.saturating_add(flag_offset))
+            {
+                *slot |= 0x08;
+            }
+            i = i.saturating_add(1);
+        }
+    }
+    out
+}
+
 /// A unique tmp-file path for a `SqliteStore` under test, so parallel tests never collide.
 fn tmp_db_path(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()

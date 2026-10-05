@@ -19,6 +19,9 @@ type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 const BILL_EML: &[u8] = include_bytes!("fixtures/bill.eml");
 const DIAN_NO_PERIOD_EML: &[u8] =
     include_bytes!("../../core/tests/fixtures/ubl/dian_no_period.eml");
+const BILL_WITH_BZIP2_EML: &[u8] =
+    include_bytes!("../../core/tests/fixtures/zip/bill_with_bzip2.eml");
+const DIAN_CORRUPT_EML: &[u8] = include_bytes!("../../core/tests/fixtures/ubl/dian_corrupt.eml");
 const MALFORMED_EML: &[u8] = include_bytes!("fixtures/malformed.eml");
 
 /// Sends `body` as a `POST /v1/ingest/email` request and returns the response's status plus
@@ -201,5 +204,37 @@ async fn ac10_bill_without_issued_or_period_needs_review() -> Result<()> {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "needs_review");
     assert!(body.get("issued").is_some_and(serde_json::Value::is_null));
+    Ok(())
+}
+
+/// AC5 (#36): POSTing `bill_with_bzip2.eml` through the #27 chain answers 201, and fetching
+/// the bill returns amount 1,234.56 EUR.
+#[tokio::test]
+async fn ac5_bill_with_unsupported_zip_is_created_with_amount() -> Result<()> {
+    let (router, _store) = common::app_with_xml().await?;
+    let id = to_hex(hauz_core::ingest::raw_hash(BILL_WITH_BZIP2_EML).as_bytes());
+
+    let (status, _) = post_email(router.clone(), BILL_WITH_BZIP2_EML.to_vec()).await?;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = get_bill(router, &id).await?;
+    assert_eq!(status, StatusCode::OK);
+    let bill: hauz_core::bill::Bill = serde_json::from_value(body)?;
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(123_456, Currency::new("EUR")?))
+    );
+    Ok(())
+}
+
+/// AC6 (#36): POSTing `dian_corrupt.eml` (a malformed zip) through the #27 chain still
+/// answers 400 and stores nothing.
+#[tokio::test]
+async fn ac6_malformed_zip_is_bad_request_and_store_stays_empty() -> Result<()> {
+    let (router, store) = common::app_with_xml().await?;
+
+    let (status, _) = post_email(router, DIAN_CORRUPT_EML.to_vec()).await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(store.list().await?.len(), 0);
     Ok(())
 }

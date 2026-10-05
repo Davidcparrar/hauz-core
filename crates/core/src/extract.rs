@@ -73,6 +73,13 @@ pub enum Note {
     /// [`crate::llm::LlmExtractor`]'s client replied with text that did not parse as the
     /// requested JSON schema.
     LlmMalformed,
+    /// The zip attachment at `document` is a valid archive [`crate::zip::read`] cannot open
+    /// ([`crate::zip::Error::Unsupported`]: data descriptor, zip64, encryption, a codec),
+    /// so its contents are unknown; the other documents still count.
+    UnreadableArchive {
+        /// The index into `Envelope::documents` of the unreadable archive.
+        document: usize,
+    },
 }
 
 /// A validated confidence score in `0..=100`.
