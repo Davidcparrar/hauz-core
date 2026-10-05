@@ -202,3 +202,79 @@ async fn store_busy_timeout_concurrent_inserts_all_succeed() -> Result<()> {
     assert_eq!(store.list().await?.len(), 16);
     Ok(())
 }
+
+/// AC6 (#37): a bill with `issued: Some(d)` reads back that `issued` from `get`,
+/// `find_by_hash` and `list`.
+#[tokio::test]
+async fn ac6_issued_round_trips_through_every_read_path() -> Result<()> {
+    let db = TmpDbFile::new("issued-ac6");
+    let store = SqliteStore::open(&db.path).await?;
+    let bill = common::extracted_bill("bill-issued")?;
+    let issued = bill.issued();
+    assert!(issued.is_some());
+    store.insert(&common::hash(60), &bill).await?;
+
+    let got = store.get(bill.id()).await?.ok_or("get: missing")?;
+    assert_eq!(got.issued(), issued);
+    let found = store
+        .find_by_hash(&common::hash(60))
+        .await?
+        .ok_or("find_by_hash: missing")?;
+    assert_eq!(found.issued(), issued);
+    let listed = store.list().await?;
+    assert_eq!(listed.first().and_then(|b| b.issued()), issued);
+    Ok(())
+}
+
+/// AC7 (#37): a file migrated with only `0001` and holding a raw row is upgraded by
+/// `SqliteStore::open`; the row reads back with `issued() == None`, the rest unchanged.
+#[tokio::test]
+async fn ac7_open_applies_0002_to_a_0001_only_database() -> Result<()> {
+    let db = TmpDbFile::new("issued-ac7");
+    let dir = std::env::temp_dir().join(format!("hauz-mig-0001-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/0001_bills.sql"),
+        dir.join("0001_bills.sql"),
+    )?;
+
+    let mut conn = SqliteConnectOptions::new()
+        .filename(&db.path)
+        .create_if_missing(true)
+        .connect()
+        .await?;
+    sqlx::migrate::Migrator::new(dir.as_path())
+        .await?
+        .run(&mut conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO bills (id, hash, vendor, amount_minor, currency, period_start, period_end, \
+         due, status, inserted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("old-row")
+    .bind([70u8; 32].as_slice())
+    .bind("Acme Power")
+    .bind(1_234i64)
+    .bind("USD")
+    .bind(time::macros::date!(2026 - 01 - 01))
+    .bind(time::macros::date!(2026 - 01 - 31))
+    .bind(time::macros::date!(2026 - 02 - 15))
+    .bind("extracted")
+    .bind(OffsetDateTime::now_utc())
+    .execute(&mut conn)
+    .await?;
+    drop(conn);
+    std::fs::remove_dir_all(&dir)?;
+
+    let store = SqliteStore::open(&db.path).await?;
+    let bill = store
+        .get(&hauz_core::bill::BillId::new("old-row")?)
+        .await?
+        .ok_or("old row missing")?;
+    assert_eq!(bill.issued(), None);
+    assert_eq!(bill.vendor().map(|v| v.name()), Some("Acme Power"));
+    assert_eq!(bill.amount().map(|m| m.minor_units()), Some(1_234));
+    assert_eq!(bill.due(), Some(time::macros::date!(2026 - 02 - 15)));
+    assert_eq!(bill.status(), hauz_core::bill::Status::Extracted);
+    Ok(())
+}

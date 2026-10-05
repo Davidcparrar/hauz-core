@@ -1,7 +1,7 @@
 //! [property] tests for the `ingest` module's public API: for every `Extraction` (the same
 //! strategy `extract`'s property tests use), ingesting `bill_eml()` through a `Fixed`
 //! extractor stores exactly the fields the extraction carried, with the status the
-//! confidence/vendor/period rule predicts. One file per level per module. Test fn names carry
+//! confidence/vendor/(period or issued) rule predicts. One file per level per module. Test fn names carry
 //! the spec criterion they satisfy: `acN_<behavior>`.
 
 mod common;
@@ -115,7 +115,7 @@ impl Extractor for Fixed {
 proptest! {
     /// AC11: ingesting `bill_eml()` with `Fixed(e)` into a fresh `InMemoryStore` is always
     /// `Created`; the stored status is `Extracted` iff `e.amount.confidence >= 50 ∧ e.vendor ∧
-    /// e.period`, and the stored amount, due, vendor, period equal `e`'s values either way.
+    /// (e.period ∨ e.issued)` (AC13, #37), and the stored amount, issued, due, vendor, period equal `e`'s values either way.
     #[test]
     fn ac11_ingest_with_fixed_extraction_matches_status_rule(e in arb_extraction()) {
         let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -127,7 +127,7 @@ proptest! {
             .as_ref()
             .is_some_and(|field| field.confidence.get() >= EXTRACTED_MIN_CONFIDENCE)
             && e.vendor.is_some()
-            && e.period.is_some()
+            && (e.period.is_some() || e.issued.is_some())
         {
             Status::Extracted
         } else {
@@ -145,6 +145,7 @@ proptest! {
 
         prop_assert_eq!(bill.status(), expected_status);
         prop_assert_eq!(bill.amount().cloned(), expected.amount.map(|f| f.value));
+        prop_assert_eq!(bill.issued(), expected.issued.map(|f| f.value));
         prop_assert_eq!(bill.due(), expected.due.map(|f| f.value));
         prop_assert_eq!(bill.vendor().cloned(), expected.vendor.map(|f| f.value));
         prop_assert_eq!(bill.period().cloned(), expected.period.map(|f| f.value));

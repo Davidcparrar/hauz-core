@@ -44,7 +44,7 @@ fn arb_status() -> impl Strategy<Value = Status> {
     prop_oneof![Just(Status::Extracted), Just(Status::NeedsReview)]
 }
 
-/// A valid `Bill`: `Extracted` bills always carry vendor, amount, and period; `NeedsReview`
+/// A valid `Bill`: `Extracted` bills always carry vendor, amount, and a period or issue date; `NeedsReview`
 /// bills carry an arbitrary subset (including none), built through `Bill::try_from`.
 fn arb_bill() -> impl Strategy<Value = Bill> {
     (
@@ -54,13 +54,25 @@ fn arb_bill() -> impl Strategy<Value = Bill> {
         arb_money(),
         arb_billing_period(),
         proptest::option::of(arb_date()),
+        proptest::option::of(arb_date()),
         any::<bool>(),
         any::<bool>(),
         any::<bool>(),
     )
         .prop_filter_map(
             "valid bill draft",
-            |(id, status, vendor, amount, period, due, keep_vendor, keep_amount, keep_period)| {
+            |(
+                id,
+                status,
+                vendor,
+                amount,
+                period,
+                issued,
+                due,
+                keep_vendor,
+                keep_amount,
+                keep_period,
+            )| {
                 let extracted = status == Status::Extracted;
                 let draft = BillDraft {
                     id,
@@ -74,11 +86,13 @@ fn arb_bill() -> impl Strategy<Value = Bill> {
                     } else {
                         None
                     },
-                    period: if extracted || keep_period {
+                    // An `Extracted` bill needs a period unless it carries an issue date.
+                    period: if (extracted && issued.is_none()) || keep_period {
                         Some(period)
                     } else {
                         None
                     },
+                    issued,
                     due,
                     status,
                 };
@@ -105,6 +119,10 @@ proptest! {
     fn ac12_json_round_trips(bill in arb_bill()) {
         let json = serde_json::to_string(&bill)?;
         let parsed: Bill = serde_json::from_str(&json)?;
+        if bill.status() == Status::Extracted {
+            prop_assert!(bill.vendor().is_some() && bill.amount().is_some());
+            prop_assert!(bill.period().is_some() || bill.issued().is_some());
+        }
         prop_assert_eq!(parsed, bill);
     }
 }

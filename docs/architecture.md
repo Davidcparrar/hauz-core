@@ -29,6 +29,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
 - `bill` — owns the domain vocabulary: `Bill`, `BillDraft`, `BillId`, `Money`
   (minor units + `Currency`), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
   Parse, don't validate: fallible constructors; `Bill` only via `TryFrom<BillDraft>`, serde too.
+  `Extracted` needs vendor + amount + (period or `issued`); other fields optional.
 - `email` — owns MIME decoding (mail-parser): `Envelope::parse(&[u8]) ->
   Result<Envelope, Error>`. `Envelope` and `Document` are pub-field records: `subject`,
   `sender` (addr-spec, required), `date` (UTC), `text`, `html`, `documents: Vec<Document
@@ -36,9 +37,9 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
   lowercase `type/subtype`. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "envelope ⇒ candidate fields": `trait Extractor: Send +
   Sync { fn extract<'a>(&'a self, &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> }`
-  (`dyn`-safe),   `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
+  (`dyn`-safe), `Extraction` (pub-field record: `amount`, `issued`, `due`, `period`, `vendor`, each
   `Option<Field<T>>`; `is_complete(min_confidence: u8)` ⇔ amount at ≥ threshold plus vendor
-  plus period), `Field<T> { value, confidence: Confidence (0..=100), span: Span
+  plus (period or issued)), `Field<T> { value, confidence: Confidence (0..=100), span: Span
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
   Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
@@ -71,7 +72,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
   (50), `Error { Email, Extract, Store, Bill }`. Order: hash →
   `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = lowercase
   hex of the hash. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
-  `NeedsReview` keeping present fields. A parse or extractor `Err` stores nothing; `issued` and `notes` are not persisted.
+  `NeedsReview` keeping present fields. A parse or extractor `Err` stores nothing; `notes` are not persisted.
 
 ## Entry points
 - server (`crates/server`, lib + `main.rs`): `AppState::new(Arc<dyn BillStore>, Arc<dyn
@@ -91,11 +92,10 @@ Spaces bucket from one Droplet (#22). AWS S3 later is configuration only.
 - `mail` (#42, #43): mail-source edge trait, `GmailSource` (REST over `reqwest`, refresh token,
   `gmail.readonly`, label poll) ingesting in-process; `hauz gmail-auth`/`fetch`; server poll.
 - `crates/tui` (#41): read-only ratatui bill browser over the SQLite file.
-- `Extracted` = amount + vendor + (period or issued), `issued` persisted (#37); ISO 4217-only
-  `Currency` (#38); bearer auth on `/v1` (#40).
+- ISO 4217-only `Currency` (#38); bearer auth on `/v1` (#40).
 
 ## Risks / debt
-- Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (period rule, #37); a tax ID
+- Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (pre-#37 period rule); a tax ID
   stored as `NIT` money (#38); an octet-stream DIAN zip skipped (#35); an unsupported unrelated
   zip fails ingest (#36). A slightly wrong PDF xref reads as empty.
-- Single-writer SQLite suits one service; a second writer means Turso/Postgres.
+- Single-writer SQLite suits one service; more writers need Turso/Postgres.

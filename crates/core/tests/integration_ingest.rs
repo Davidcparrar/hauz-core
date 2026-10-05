@@ -320,10 +320,10 @@ async fn ac5_bare_dollar_bill_escalates_to_model_amount() -> Result<()> {
 }
 
 /// AC7 (#27): `dian_full.eml` ingested through `Chain([XmlInvoiceExtractor, TextExtractor,
-/// PdfTextExtractor])` is stored `Extracted` with the AC1 vendor, amount, period and due;
-/// `dian_no_period.eml` is stored `NeedsReview` with AC2's amount, vendor and due, no period.
+/// PdfTextExtractor])` is stored `Extracted` with the AC1 vendor, amount, period and due
+/// (the no-period eml is covered by `ac8_dian_no_period_chain_is_extracted_with_issued`).
 #[tokio::test]
-async fn ac7_dian_zip_chain_extracted_and_needs_review() -> Result<()> {
+async fn ac7_dian_zip_chain_extracted() -> Result<()> {
     let chain = Chain::new(vec![
         Box::new(XmlInvoiceExtractor),
         Box::new(TextExtractor),
@@ -354,15 +354,26 @@ async fn ac7_dian_zip_chain_extracted_and_needs_review() -> Result<()> {
         )?)
     );
     assert_eq!(bill.due(), Some(date!(2026 - 09 - 25)));
+    Ok(())
+}
 
-    let db = TmpDbFile::new("ingest-27-ac7-no-period");
+/// AC8 (#37): `dian_no_period.eml` ingested through the #27 chain is stored `Extracted` with
+/// issued 2026-09-10 and no period.
+#[tokio::test]
+async fn ac8_dian_no_period_chain_is_extracted_with_issued() -> Result<()> {
+    let chain = Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ]);
+    let db = TmpDbFile::new("ingest-37-ac8");
     let store = SqliteStore::open(&db.path).await?;
     let outcome = ingest(DIAN_NO_PERIOD_EML, &chain, &store).await?;
     let Outcome::Created(id) = outcome else {
         return Err(format!("expected Created, got {outcome:?}").into());
     };
     let bill = store.get(&id).await?.ok_or("missing bill")?;
-    assert_eq!(bill.status(), Status::NeedsReview);
+    assert_eq!(bill.status(), Status::Extracted);
     assert_eq!(
         bill.vendor(),
         Some(&Vendor::new("Gas Natural Ejemplo S.A.")?)
@@ -373,5 +384,6 @@ async fn ac7_dian_zip_chain_extracted_and_needs_review() -> Result<()> {
     );
     assert_eq!(bill.due(), Some(date!(2026 - 09 - 30)));
     assert_eq!(bill.period(), None);
+    assert_eq!(bill.issued(), Some(date!(2026 - 09 - 10)));
     Ok(())
 }

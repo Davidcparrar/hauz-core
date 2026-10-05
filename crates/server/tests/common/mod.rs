@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use hauz_core::bill::{Bill, BillId};
-use hauz_core::extract::{Chain, Extractor, PdfTextExtractor, TextExtractor};
+use hauz_core::extract::{Chain, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor};
 use hauz_core::store::{
     BillStore, BoxFuture, Error as StoreError, InsertOutcome, RawHash, SqliteStore,
 };
@@ -28,6 +28,19 @@ pub(crate) fn tmp_db_path() -> std::path::PathBuf {
 pub(crate) async fn app() -> Result<(Router, Arc<SqliteStore>)> {
     let store = Arc::new(SqliteStore::open(&tmp_db_path()).await?);
     let extractor: Arc<dyn Extractor> = Arc::new(Chain::new(vec![
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ]));
+    let state = AppState::new(store.clone(), extractor);
+    Ok((hauz_server::router(state), store))
+}
+
+/// Like [`app`], but over the #27 chain `Chain([XmlInvoiceExtractor, TextExtractor,
+/// PdfTextExtractor])` that reads DIAN zip attachments.
+pub(crate) async fn app_with_xml() -> Result<(Router, Arc<SqliteStore>)> {
+    let store = Arc::new(SqliteStore::open(&tmp_db_path()).await?);
+    let extractor: Arc<dyn Extractor> = Arc::new(Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
         Box::new(TextExtractor),
         Box::new(PdfTextExtractor),
     ]));

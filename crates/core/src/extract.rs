@@ -163,7 +163,7 @@ pub struct Extraction {
 
 impl Extraction {
     /// True iff this extraction is complete enough to trust without review: the amount is
-    /// present at `confidence >= min_confidence`, and both vendor and period are present.
+    /// present at `confidence >= min_confidence`, the vendor is present, and so is a period or an issue date.
     /// `ingest` calls this with [`crate::ingest::EXTRACTED_MIN_CONFIDENCE`]; [`Escalate`]
     /// calls it with its own threshold.
     #[must_use]
@@ -172,7 +172,7 @@ impl Extraction {
             .amount
             .as_ref()
             .is_some_and(|field| field.confidence.get() >= min_confidence);
-        amount_ok && self.vendor.is_some() && self.period.is_some()
+        amount_ok && self.vendor.is_some() && (self.period.is_some() || self.issued.is_some())
     }
 }
 

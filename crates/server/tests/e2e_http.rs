@@ -17,6 +17,8 @@ use tower::ServiceExt;
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
 const BILL_EML: &[u8] = include_bytes!("fixtures/bill.eml");
+const DIAN_NO_PERIOD_EML: &[u8] =
+    include_bytes!("../../core/tests/fixtures/ubl/dian_no_period.eml");
 const MALFORMED_EML: &[u8] = include_bytes!("fixtures/malformed.eml");
 
 /// Sends `body` as a `POST /v1/ingest/email` request and returns the response's status plus
@@ -163,5 +165,41 @@ async fn ac6_oversized_body_is_payload_too_large() -> Result<()> {
 
     let status = post_email_status(router, oversized).await?;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    Ok(())
+}
+
+/// AC9 (#37): POSTing `dian_no_period.eml` through the #27 chain and fetching the bill answers
+/// 200 with `status` `"extracted"`, `period` null and `issued` 2026-09-10.
+#[tokio::test]
+async fn ac9_dian_without_period_is_extracted_with_issued() -> Result<()> {
+    let (router, _store) = common::app_with_xml().await?;
+    let id = to_hex(hauz_core::ingest::raw_hash(DIAN_NO_PERIOD_EML).as_bytes());
+
+    let (status, _) = post_email(router.clone(), DIAN_NO_PERIOD_EML.to_vec()).await?;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = get_bill(router, &id).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "extracted");
+    assert!(body["period"].is_null());
+    let bill: hauz_core::bill::Bill = serde_json::from_value(body)?;
+    assert_eq!(bill.issued(), Some(time::macros::date!(2026 - 09 - 10)));
+    Ok(())
+}
+
+/// AC10 (#37): POSTing `bill.eml` (no issued, no period) and fetching it answers `status`
+/// `"needs_review"` with `issued` null.
+#[tokio::test]
+async fn ac10_bill_without_issued_or_period_needs_review() -> Result<()> {
+    let (router, _store) = common::app_with_xml().await?;
+    let id = to_hex(hauz_core::ingest::raw_hash(BILL_EML).as_bytes());
+
+    let (status, _) = post_email(router.clone(), BILL_EML.to_vec()).await?;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = get_bill(router, &id).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "needs_review");
+    assert!(body.get("issued").is_some_and(serde_json::Value::is_null));
     Ok(())
 }

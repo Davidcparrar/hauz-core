@@ -27,8 +27,8 @@ pub enum Error {
     /// A billing period's end date preceded its start date.
     #[error("billing period end must not precede start")]
     InvertedPeriod,
-    /// An extracted bill was missing its vendor, amount, or billing period.
-    #[error("extracted bill is missing vendor, amount, or period")]
+    /// An extracted bill was missing its vendor, amount, or both billing period and issue date.
+    #[error("extracted bill is missing vendor, amount, or period or issue date")]
     IncompleteBill,
 }
 
@@ -250,7 +250,7 @@ impl TryFrom<BillingPeriodRaw> for BillingPeriod {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    /// All required fields (vendor, amount, period) are present.
+    /// All required fields (vendor, amount, and period or issue date) are present.
     Extracted,
     /// One or more fields could not be extracted and need a human to fill them in.
     NeedsReview,
@@ -269,6 +269,8 @@ pub struct BillDraft {
     pub amount: Option<Money>,
     /// The billing period, when known.
     pub period: Option<BillingPeriod>,
+    /// The issue date, when known.
+    pub issued: Option<time::Date>,
     /// The due date, when known.
     pub due: Option<time::Date>,
     /// Whether this draft's fields were fully extracted or still need review.
@@ -285,6 +287,7 @@ pub struct Bill {
     vendor: Option<Vendor>,
     amount: Option<Money>,
     period: Option<BillingPeriod>,
+    issued: Option<time::Date>,
     due: Option<time::Date>,
     status: Status,
 }
@@ -314,6 +317,12 @@ impl Bill {
         self.period.as_ref()
     }
 
+    /// The issue date, when known.
+    #[must_use]
+    pub fn issued(&self) -> Option<time::Date> {
+        self.issued
+    }
+
     /// The due date, when known.
     #[must_use]
     pub fn due(&self) -> Option<time::Date> {
@@ -332,10 +341,12 @@ impl TryFrom<BillDraft> for Bill {
 
     /// # Errors
     /// Returns [`Error::IncompleteBill`] when `draft.status` is [`Status::Extracted`] and
-    /// `vendor`, `amount`, or `period` is `None`.
+    /// `vendor` or `amount` is `None`, or both `period` and `issued` are.
     fn try_from(draft: BillDraft) -> Result<Self, Error> {
         if draft.status == Status::Extracted
-            && (draft.vendor.is_none() || draft.amount.is_none() || draft.period.is_none())
+            && (draft.vendor.is_none()
+                || draft.amount.is_none()
+                || (draft.period.is_none() && draft.issued.is_none()))
         {
             return Err(Error::IncompleteBill);
         }
@@ -344,6 +355,7 @@ impl TryFrom<BillDraft> for Bill {
             vendor: draft.vendor,
             amount: draft.amount,
             period: draft.period,
+            issued: draft.issued,
             due: draft.due,
             status: draft.status,
         })
@@ -357,6 +369,7 @@ impl From<Bill> for BillDraft {
             vendor: bill.vendor,
             amount: bill.amount,
             period: bill.period,
+            issued: bill.issued,
             due: bill.due,
             status: bill.status,
         }
