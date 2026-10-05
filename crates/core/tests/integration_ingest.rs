@@ -21,6 +21,7 @@ use time::macros::date;
 const PLAIN: &[u8] = include_bytes!("fixtures/plain.eml");
 const MALFORMED: &[u8] = include_bytes!("fixtures/malformed.eml");
 const CO_BARE_DOLLAR: &[u8] = include_bytes!("fixtures/co_bare_dollar.eml");
+const CO_TAX_ID: &[u8] = include_bytes!("fixtures/co_tax_id.eml");
 const DIAN_FULL_EML: &[u8] = include_bytes!("fixtures/ubl/dian_full.eml");
 const BILL_WITH_BZIP2_EML: &[u8] = include_bytes!("fixtures/zip/bill_with_bzip2.eml");
 const DIAN_NO_PERIOD_EML: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.eml");
@@ -412,5 +413,24 @@ async fn ac4_bill_with_unsupported_zip_is_needs_review_with_text_fields() -> Res
         Some(&Money::new(123_456, Currency::new("EUR")?))
     );
     assert_eq!(bill.due(), Some(date!(2026 - 10 - 15)));
+    Ok(())
+}
+
+/// AC7 (#38): an email carrying a `NIT` tax id and a `COP` total stores the `COP` total.
+#[tokio::test]
+async fn ac7_tax_id_email_stores_cop_total() -> Result<()> {
+    let db = TmpDbFile::new("ingest-38-ac7");
+    let store = SqliteStore::open(&db.path).await?;
+
+    let outcome = ingest(CO_TAX_ID, &TextExtractor, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(18_435_000, Currency::new("COP")?))
+    );
     Ok(())
 }

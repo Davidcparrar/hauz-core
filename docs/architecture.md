@@ -27,7 +27,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
 
 ## Modules in `core`
 - `bill` — owns the domain vocabulary: `Bill`, `BillDraft`, `BillId`, `Money`
-  (minor units + `Currency`), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
+  (minor units + `Currency`: active ISO 4217 only), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
   Parse, don't validate: fallible constructors; `Bill` only via `TryFrom<BillDraft>`, serde too.
   `Extracted` needs vendor + amount + (period or `issued`); other fields optional.
 - `email` — owns MIME decoding (mail-parser): `Envelope::parse(&[u8]) ->
@@ -92,9 +92,9 @@ Spaces bucket from one Droplet (#22). AWS S3 later is configuration only.
 - `mail` (#42, #43): mail-source edge trait, `GmailSource` (REST over `reqwest`, refresh token,
   `gmail.readonly`, label poll) ingesting in-process; `hauz gmail-auth`/`fetch`; server poll.
 - `crates/tui` (#41): read-only ratatui bill browser over the SQLite file.
-- ISO 4217-only `Currency` (#38); bearer auth on `/v1` (#40).
+- Bearer auth on `/v1` (#40).
 
 ## Risks / debt
 - Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (pre-#37 period rule); a tax ID
-  stored as `NIT` money (#38). A slightly wrong PDF xref reads as empty.
+  stored as `NIT` money (fixed by #38; such rows read as `Corrupt`). A slightly wrong PDF xref reads as empty.
 - Single-writer SQLite suits one service; more writers need Turso/Postgres.

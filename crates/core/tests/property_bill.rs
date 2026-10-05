@@ -4,9 +4,10 @@
 use hauz_core::bill::{Bill, BillDraft, BillId, BillingPeriod, Currency, Money, Status, Vendor};
 use proptest::prelude::*;
 
-/// A currency code: exactly 3 ASCII uppercase letters, built through [`Currency::new`].
+/// A currency code sampled from a fixed list of active ISO 4217 codes.
 fn arb_currency() -> impl Strategy<Value = Currency> {
-    "[A-Z]{3}".prop_filter_map("valid currency", |raw| Currency::new(&raw).ok())
+    proptest::sample::select(vec!["USD", "EUR", "GBP", "COP", "JPY", "XOF", "COU", "CLF"])
+        .prop_filter_map("valid currency", |raw| Currency::new(raw).ok())
 }
 
 /// A trimmed, non-empty vendor name, built through [`Vendor::new`].
@@ -124,5 +125,21 @@ proptest! {
             prop_assert!(bill.period().is_some() || bill.issued().is_some());
         }
         prop_assert_eq!(parsed, bill);
+    }
+}
+
+proptest! {
+    /// AC8 (#38): any accepted code is exactly 3 ASCII uppercase letters and round-trips
+    /// through serde_json unchanged.
+    #[test]
+    fn ac8_valid_currency_is_well_shaped_and_round_trips(s in "\\PC{0,5}|[A-Z]{3}") {
+        if let Ok(c) = Currency::new(&s) {
+            prop_assert_eq!(s.len(), 3);
+            prop_assert!(s.bytes().all(|b| b.is_ascii_uppercase()));
+            let json = serde_json::to_string(&c).map_err(|e| TestCaseError::fail(e.to_string()))?;
+            let back: Currency =
+                serde_json::from_str(&json).map_err(|e| TestCaseError::fail(e.to_string()))?;
+            prop_assert_eq!(back, c);
+        }
     }
 }
