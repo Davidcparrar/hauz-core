@@ -18,7 +18,8 @@ human sees a green or red check next to the merge button (Gate 2).
 
 ## Assumptions
 - no spike: the open questions are about GitHub's runner, and this PR's own check run is
-  the experiment. The PR can only be opened once that check is green.
+  the experiment. `pull_request` only fires once a PR exists, so the PR opens as a **draft**
+  and is marked ready only after its check is green and the evidence is in `review.md`.
 - Owned path: `.github/workflows/verify.yml`, written by the Leader (the issue allows it; the
   `implementer-rust` agent's boundary is `crates/**` and it does Rust TDD, which does not fit
   here). The reviewer still reviews it.
