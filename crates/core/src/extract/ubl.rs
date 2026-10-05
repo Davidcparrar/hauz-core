@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use super::xml::{Element, find_element};
-use super::{Confidence, Error, Extraction, Field, Source, Span, merge};
+use super::{Confidence, Error, Extraction, Field, Note, Source, Span, merge};
 use crate::BoxFuture;
 use crate::bill::{BillingPeriod, Currency, Money, Vendor};
 use crate::email::Envelope;
@@ -41,7 +41,9 @@ const CONFIDENCE: u8 = 100;
 /// attachment with [`crate::zip`], finds the first `*.xml` entry whose text holds an
 /// `Invoice` start tag, and plucks amount, vendor, issue/due dates and (when declared)
 /// billing period from it. Attachments that are not a zip, or whose zip holds no `Invoice`
-/// root (e.g. a `CreditNote`), contribute nothing.
+/// root (e.g. a `CreditNote`), contribute nothing. An archive [`crate::zip::read`] reports
+/// as unsupported contributes [`Note::UnreadableArchive`]; a malformed one is
+/// [`Error::Zip`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct XmlInvoiceExtractor;
 
@@ -52,10 +54,23 @@ impl XmlInvoiceExtractor {
             if !is_zip(document) {
                 continue;
             }
-            let entries = zip::read(&document.bytes).map_err(|source| Error::Zip {
-                document: index,
-                source,
-            })?;
+            let entries = match zip::read(&document.bytes) {
+                Ok(entries) => entries,
+                Err(zip::Error::Unsupported { .. }) => {
+                    let mut note_only = Extraction::default();
+                    note_only
+                        .notes
+                        .insert(Note::UnreadableArchive { document: index });
+                    parts.push(note_only);
+                    continue;
+                }
+                Err(source) => {
+                    return Err(Error::Zip {
+                        document: index,
+                        source,
+                    });
+                }
+            };
             let Some(xml) = invoice_xml_text(&entries) else {
                 continue;
             };

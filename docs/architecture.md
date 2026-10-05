@@ -41,14 +41,14 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
   `Option<Field<T>>`; `is_complete(min_confidence: u8)` ⇔ amount at ≥ threshold plus vendor
   plus (period or issued)), `Field<T> { value, confidence: Confidence (0..=100), span: Span
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
-  { NoTextLayer { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
+  { NoTextLayer { document }, UnreadableArchive { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
   Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
   field, notes unioned, deterministic ties: order-insensitive, idempotent), `TextExtractor` (no-regex scanner over `text` and stripped `html`; a bare `$` is no currency),
   `PdfTextExtractor` (same scanner over each PDF's `text_layer(&[u8]) ->
   Result<Option<String>>`, pdf-extract under `catch_unwind`; image-only ⇒ `NoTextLayer`,
   corrupt ⇒ `Error::Pdf`),
   `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` amount, supplier, dates,
-  period at confidence 100, scoped under `Invoice`; bad zip ⇒ `Error::Zip`), `Chain`
+  period at confidence 100, scoped under `Invoice`; unsupported zip ⇒ `UnreadableArchive`, malformed ⇒ `Error::Zip`), `Chain`
   (`Chain::new(Vec<Box<dyn Extractor>>)`, an `Extractor`: runs each in order, first
   `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`:
   `primary` if complete, else merged with `secondary`; either `Err` propagates).
@@ -96,6 +96,5 @@ Spaces bucket from one Droplet (#22). AWS S3 later is configuration only.
 
 ## Risks / debt
 - Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (pre-#37 period rule); a tax ID
-  stored as `NIT` money (#38); an octet-stream DIAN zip skipped (#35); an unsupported unrelated
-  zip fails ingest (#36). A slightly wrong PDF xref reads as empty.
+  stored as `NIT` money (#38). A slightly wrong PDF xref reads as empty.
 - Single-writer SQLite suits one service; more writers need Turso/Postgres.

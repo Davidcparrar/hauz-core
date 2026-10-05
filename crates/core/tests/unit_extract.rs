@@ -26,6 +26,7 @@ const CO_BARE_DOLLAR: &str = include_str!("fixtures/extract/co_bare_dollar.txt")
 const DIAN_FULL_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_full.zip");
 const DIAN_NO_PERIOD_ZIP: &[u8] = include_bytes!("fixtures/ubl/dian_no_period.zip");
 const NOT_INVOICE_ZIP: &[u8] = include_bytes!("fixtures/ubl/not_invoice.zip");
+const BZIP2_ZIP: &[u8] = include_bytes!("fixtures/zip/bzip2.zip");
 const DIAN_FULL_XML: &str = include_str!("fixtures/ubl/dian_full.xml");
 
 /// Wraps `bytes` as a single `application/zip` document in an otherwise-empty envelope.
@@ -1007,5 +1008,102 @@ async fn octet_stream_zip_with_zip_filename_is_read() -> Result<()> {
         XmlInvoiceExtractor.extract(&envelope).await?,
         Extraction::default()
     );
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------------------
+// XmlInvoiceExtractor (#36): an unsupported zip degrades to a note, a malformed one still fails.
+// -----------------------------------------------------------------------------------------
+
+/// A `Document` of `bytes` typed `application/zip`.
+fn zip_document(bytes: &[u8]) -> Result<Document> {
+    Ok(Document {
+        mime: MimeType::new("application/zip")?,
+        filename: None,
+        bytes: bytes.to_vec(),
+    })
+}
+
+/// An otherwise-empty envelope holding exactly `documents`.
+fn documents_envelope(documents: Vec<Document>) -> Envelope {
+    Envelope {
+        subject: None,
+        sender: "facturacion@acme-luz.example".to_string(),
+        date: None,
+        text: None,
+        html: None,
+        documents,
+    }
+}
+
+/// A stored zip with data-descriptor flag bit 3 set: `zip::read` answers `Unsupported`.
+fn descriptor_zip() -> Vec<u8> {
+    let archive = common::build_stored_zip(&[("a.txt".to_string(), b"hello".to_vec())]);
+    common::with_data_descriptor(&archive)
+}
+
+/// AC1 (#36): document 0 is `bzip2.zip` as `application/zip`: `Ok`, no fields, notes exactly
+/// `{UnreadableArchive { document: 0 }}`.
+#[tokio::test]
+async fn ac1_bzip2_zip_degrades_to_unreadable_archive_note() -> Result<()> {
+    let envelope = documents_envelope(vec![zip_document(BZIP2_ZIP)?]);
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+
+    let expected = Extraction {
+        notes: BTreeSet::from([Note::UnreadableArchive { document: 0 }]),
+        ..Extraction::default()
+    };
+    assert_eq!(extraction, expected);
+    Ok(())
+}
+
+/// AC2 (#36): document 0 is a test-built descriptor zip and document 1 is `dian_full.zip`:
+/// the #27 AC1 fields plus notes `{UnreadableArchive { document: 0 }}`.
+#[tokio::test]
+async fn ac2_descriptor_zip_beside_dian_zip_keeps_dian_fields() -> Result<()> {
+    let envelope = documents_envelope(vec![
+        zip_document(&descriptor_zip())?,
+        zip_document(DIAN_FULL_ZIP)?,
+    ]);
+    let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
+
+    let amount = extraction.amount.ok_or("expected amount")?;
+    assert_eq!(amount.value, Money::new(18_435_000, Currency::new("COP")?));
+    assert_eq!(amount.span.source, Source::Document(1));
+    let vendor = extraction.vendor.ok_or("expected vendor")?;
+    assert_eq!(vendor.value, Vendor::new("Acme & Luz S.A.S. E.S.P.")?);
+    assert_eq!(
+        extraction.issued.ok_or("expected issued")?.value,
+        date!(2026 - 09 - 01)
+    );
+    assert_eq!(
+        extraction.due.ok_or("expected due")?.value,
+        date!(2026 - 09 - 25)
+    );
+    let period = extraction.period.ok_or("expected period")?;
+    assert_eq!(period.value.start(), date!(2026 - 08 - 01));
+    assert_eq!(period.value.end(), date!(2026 - 08 - 31));
+    assert_eq!(
+        extraction.notes,
+        BTreeSet::from([Note::UnreadableArchive { document: 0 }])
+    );
+    Ok(())
+}
+
+/// AC3 (#36): an unsupported zip at document 0 does not mask a malformed one at document 1:
+/// `Err(Error::Zip { document: 1, source: Malformed { .. } })`.
+#[tokio::test]
+async fn ac3_malformed_zip_after_unsupported_is_still_zip_error() -> Result<()> {
+    let truncated = &DIAN_FULL_ZIP[..DIAN_FULL_ZIP.len() - 10];
+    let envelope = documents_envelope(vec![zip_document(BZIP2_ZIP)?, zip_document(truncated)?]);
+
+    let result = XmlInvoiceExtractor.extract(&envelope).await;
+    assert!(matches!(
+        result,
+        Err(Error::Zip {
+            document: 1,
+            source: hauz_core::zip::Error::Malformed { .. }
+        })
+    ));
     Ok(())
 }
