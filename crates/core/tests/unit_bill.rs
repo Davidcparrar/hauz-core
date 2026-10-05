@@ -134,6 +134,7 @@ fn ac6_rejects_end_before_start() {
     assert_eq!(BillingPeriod::new(start, end), Err(Error::InvertedPeriod));
 }
 
+/// AC2 (#37): an extracted bill missing vendor, amount, or both period and issued date is incomplete.
 #[test]
 fn ac7_extracted_bill_missing_vendor_amount_or_period_and_issued_is_incomplete() -> Result<()> {
     let mut missing_vendor = complete_draft()?;

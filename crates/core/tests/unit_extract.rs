@@ -613,7 +613,7 @@ fn complete(confidence: u8) -> Result<Extraction> {
 }
 
 /// AC1: `is_complete(50)` is true for amount at 50 (plus vendor and period), false at 49, and
-/// false when vendor or period is absent.
+/// false when vendor is absent, or period and issued are both absent.
 #[test]
 fn ac1_is_complete_at_threshold_below_and_missing_fields() -> Result<()> {
     assert!(complete(50)?.is_complete(50));
@@ -788,10 +788,10 @@ async fn ac1_dian_full_zip_exact_fields() -> Result<()> {
     Ok(())
 }
 
-/// AC2: `dian_no_period.zip` yields USD 99.50, the legal-entity vendor, issued/due, no
+/// AC5 (#37), keeping #27 AC2 fields: `dian_no_period.zip` yields USD 99.50, the legal-entity vendor, issued/due, no
 /// period; `is_complete(50)` is true (issued stands in for the period, #37 AC5).
 #[tokio::test]
-async fn ac2_dian_no_period_zip_partial_fields() -> Result<()> {
+async fn ac5_dian_no_period_zip_is_complete_with_issued() -> Result<()> {
     let envelope = zip_envelope(DIAN_NO_PERIOD_ZIP)?;
     let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
     assert!(extraction.is_complete(50));
