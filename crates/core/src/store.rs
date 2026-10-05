@@ -125,6 +125,7 @@ fn build_draft(
     currency: Option<String>,
     period_start: Option<time::Date>,
     period_end: Option<time::Date>,
+    issued: Option<time::Date>,
     due: Option<time::Date>,
     status_raw: &str,
 ) -> Result<BillDraft, String> {
@@ -151,13 +152,14 @@ fn build_draft(
         vendor,
         amount,
         period,
+        issued,
         due,
         status,
     })
 }
 
 /// Rebuilds a `Bill` from a `SELECT id, vendor, amount_minor, currency, period_start,
-/// period_end, due, status` row.
+/// period_end, issued, due, status` row.
 fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     let id_raw: String = row.try_get("id")?;
     let vendor: Option<String> = row.try_get("vendor")?;
@@ -165,6 +167,7 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     let currency: Option<String> = row.try_get("currency")?;
     let period_start: Option<time::Date> = row.try_get("period_start")?;
     let period_end: Option<time::Date> = row.try_get("period_end")?;
+    let issued: Option<time::Date> = row.try_get("issued")?;
     let due: Option<time::Date> = row.try_get("due")?;
     let status_raw: String = row.try_get("status")?;
 
@@ -179,6 +182,7 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
         currency,
         period_start,
         period_end,
+        issued,
         due,
         &status_raw,
     )
@@ -265,9 +269,9 @@ impl BillStore for SqliteStore {
 
             sqlx::query(
                 "INSERT INTO bills \
-                 (id, hash, vendor, amount_minor, currency, period_start, period_end, due, \
+                 (id, hash, vendor, amount_minor, currency, period_start, period_end, issued, due, \
                  status, inserted_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(bill.id().as_str())
             .bind(hash.as_bytes().as_slice())
@@ -276,6 +280,7 @@ impl BillStore for SqliteStore {
             .bind(currency)
             .bind(period_start)
             .bind(period_end)
+            .bind(bill.issued())
             .bind(bill.due())
             .bind(status)
             .bind(OffsetDateTime::now_utc())
@@ -290,7 +295,7 @@ impl BillStore for SqliteStore {
     fn get<'a>(&'a self, id: &'a BillId) -> BoxFuture<'a, Result<Option<Bill>, Error>> {
         Box::pin(async move {
             let row = sqlx::query(
-                "SELECT id, vendor, amount_minor, currency, period_start, period_end, due, \
+                "SELECT id, vendor, amount_minor, currency, period_start, period_end, issued, due, \
                  status FROM bills WHERE id = ?",
             )
             .bind(id.as_str())
@@ -303,7 +308,7 @@ impl BillStore for SqliteStore {
     fn find_by_hash<'a>(&'a self, hash: &'a RawHash) -> BoxFuture<'a, Result<Option<Bill>, Error>> {
         Box::pin(async move {
             let row = sqlx::query(
-                "SELECT id, vendor, amount_minor, currency, period_start, period_end, due, \
+                "SELECT id, vendor, amount_minor, currency, period_start, period_end, issued, due, \
                  status FROM bills WHERE hash = ?",
             )
             .bind(hash.as_bytes().as_slice())
@@ -316,7 +321,7 @@ impl BillStore for SqliteStore {
     fn list<'a>(&'a self) -> BoxFuture<'a, Result<Vec<Bill>, Error>> {
         Box::pin(async move {
             let rows = sqlx::query(
-                "SELECT id, vendor, amount_minor, currency, period_start, period_end, due, \
+                "SELECT id, vendor, amount_minor, currency, period_start, period_end, issued, due, \
                  status FROM bills ORDER BY rowid ASC",
             )
             .fetch_all(&self.pool)

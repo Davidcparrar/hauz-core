@@ -19,6 +19,7 @@ fn complete_draft() -> Result<BillDraft> {
             date!(2026 - 01 - 01),
             date!(2026 - 01 - 31),
         )?),
+        issued: Some(date!(2026 - 01 - 05)),
         due: Some(date!(2026 - 02 - 15)),
         status: Status::Extracted,
     })
@@ -134,7 +135,7 @@ fn ac6_rejects_end_before_start() {
 }
 
 #[test]
-fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<()> {
+fn ac7_extracted_bill_missing_vendor_amount_or_period_and_issued_is_incomplete() -> Result<()> {
     let mut missing_vendor = complete_draft()?;
     missing_vendor.vendor = None;
     assert_eq!(Bill::try_from(missing_vendor), Err(Error::IncompleteBill));
@@ -143,9 +144,37 @@ fn ac7_extracted_bill_missing_vendor_amount_or_period_is_incomplete() -> Result<
     missing_amount.amount = None;
     assert_eq!(Bill::try_from(missing_amount), Err(Error::IncompleteBill));
 
-    let mut missing_period = complete_draft()?;
-    missing_period.period = None;
-    assert_eq!(Bill::try_from(missing_period), Err(Error::IncompleteBill));
+    let mut missing_both = complete_draft()?;
+    missing_both.period = None;
+    missing_both.issued = None;
+    assert_eq!(Bill::try_from(missing_both), Err(Error::IncompleteBill));
+
+    let mut period_only = complete_draft()?;
+    period_only.issued = None;
+    assert!(Bill::try_from(period_only).is_ok());
+    Ok(())
+}
+
+#[test]
+fn ac1_extracted_with_issued_and_no_period_is_accepted() -> Result<()> {
+    let mut draft = complete_draft()?;
+    draft.period = None;
+    draft.issued = Some(date!(2026 - 09 - 10));
+    let bill = Bill::try_from(draft)?;
+    assert_eq!(bill.issued(), Some(date!(2026 - 09 - 10)));
+    assert_eq!(bill.period(), None);
+    Ok(())
+}
+
+#[test]
+fn ac3_missing_issued_key_deserializes_to_none_and_serialized_bills_carry_it() -> Result<()> {
+    let bill = Bill::try_from(complete_draft()?)?;
+    let mut value = serde_json::to_value(&bill)?;
+    let object = value.as_object_mut().ok_or("bill is not an object")?;
+    assert!(object.contains_key("issued"));
+    object.remove("issued");
+    let parsed: Bill = serde_json::from_value(value)?;
+    assert_eq!(parsed.issued(), None);
     Ok(())
 }
 
@@ -169,6 +198,7 @@ fn ac8_needs_review_bill_accepts_any_subset_of_optional_fields() -> Result<()> {
     none_set.vendor = None;
     none_set.amount = None;
     none_set.period = None;
+    none_set.issued = None;
     none_set.due = None;
     let bill = Bill::try_from(none_set)?;
     assert_eq!(bill.status(), Status::NeedsReview);

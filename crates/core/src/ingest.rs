@@ -64,8 +64,8 @@ fn to_hex(bytes: &[u8]) -> String {
 /// `Ok(Duplicate(existing id))` without ever calling `ex`. Otherwise parses the envelope,
 /// extracts candidate fields, and drafts a bill whose id is the lowercase hex of the hash
 /// (deterministic, so the store's `DuplicateId` is unreachable on this path): `Extracted`
-/// when the amount field is present at confidence `>= EXTRACTED_MIN_CONFIDENCE` and both
-/// vendor and period are present, else `NeedsReview` keeping every present field. Inserts the
+/// when the amount field is present at confidence `>= EXTRACTED_MIN_CONFIDENCE` and vendor
+/// is present and so is a period or an issue date, else `NeedsReview` keeping every present field. Inserts the
 /// bill; a concurrent writer that won the race surfaces as `Duplicate`, not an error.
 ///
 /// # Errors
@@ -93,6 +93,7 @@ pub async fn ingest(raw: &[u8], ex: &dyn Extractor, st: &dyn BillStore) -> Resul
         vendor: extraction.vendor.map(|field| field.value),
         amount: extraction.amount.map(|field| field.value),
         period: extraction.period.map(|field| field.value),
+        issued: extraction.issued.map(|field| field.value),
         due: extraction.due.map(|field| field.value),
         status,
     };

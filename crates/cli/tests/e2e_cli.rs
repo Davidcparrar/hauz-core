@@ -13,6 +13,8 @@ use hauz_core::store::{BillStore, SqliteStore};
 // `include_bytes!` of the `core` crate's own fixtures (#27): `cli` has no corpus of its own
 // for DIAN zips, and the spec forbids duplicating them under `crates/cli/tests/fixtures/`.
 const DIAN_FULL_EML: &[u8] = include_bytes!("../../core/tests/fixtures/ubl/dian_full.eml");
+const DIAN_NO_PERIOD_EML: &[u8] =
+    include_bytes!("../../core/tests/fixtures/ubl/dian_no_period.eml");
 const DIAN_CORRUPT_EML: &[u8] = include_bytes!("../../core/tests/fixtures/ubl/dian_corrupt.eml");
 
 #[tokio::test]
@@ -309,5 +311,42 @@ async fn ac9_dian_corrupt_eml_exits_1_stores_nothing() -> common::Result<()> {
     assert!(output.stdout.is_empty());
     assert!(!output.stderr.is_empty());
     assert!(common::ids(&db).await?.is_empty());
+    Ok(())
+}
+
+/// AC11 (#37): `hauz ingest dian_no_period.eml --db <tmp>` exits 0, prints `Created <id>`, and
+/// stores an `Extracted` bill with issued 2026-09-10.
+#[tokio::test]
+async fn ac11_dian_no_period_eml_is_extracted_with_issued() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let eml = dir.join("dian_no_period.eml");
+    std::fs::write(&eml, DIAN_NO_PERIOD_EML)?;
+    let db = dir.join("a.db");
+    let hash = common::hash_hex(DIAN_NO_PERIOD_EML);
+
+    let output = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg(&eml)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("Created {hash}\n")
+    );
+
+    let store = SqliteStore::open(&db).await?;
+    let bill = store
+        .get(&BillId::new(&hash)?)
+        .await?
+        .ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.issued().map(|date| date.to_string()),
+        Some("2026-09-10".to_owned())
+    );
     Ok(())
 }

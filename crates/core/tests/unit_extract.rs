@@ -623,9 +623,42 @@ fn ac1_is_complete_at_threshold_below_and_missing_fields() -> Result<()> {
     no_vendor.vendor = None;
     assert!(!no_vendor.is_complete(50));
 
-    let mut no_period = complete(90)?;
-    no_period.period = None;
-    assert!(!no_period.is_complete(50));
+    let mut no_period_no_issued = complete(90)?;
+    no_period_no_issued.period = None;
+    assert!(!no_period_no_issued.is_complete(50));
+    Ok(())
+}
+
+/// A field for `issued`, so `is_complete` tests can complete an extraction without a period.
+fn issued_field() -> Result<Field<time::Date>> {
+    Ok(Field {
+        value: date!(2026 - 01 - 05),
+        confidence: Confidence::new(90)?,
+        span: Span {
+            source: Source::Text,
+            start: 0,
+            end: 4,
+        },
+    })
+}
+
+/// AC4 (#37): amount at 50, vendor and issued with no period is complete; neither period
+/// nor issued, or amount at 49, is not.
+#[test]
+fn ac4_is_complete_with_issued_and_no_period() -> Result<()> {
+    let with_issued = Extraction {
+        issued: Some(issued_field()?),
+        ..amount_and_vendor(50)?
+    };
+    assert!(with_issued.is_complete(50));
+
+    assert!(!amount_and_vendor(50)?.is_complete(50));
+
+    let below = Extraction {
+        issued: Some(issued_field()?),
+        ..amount_and_vendor(49)?
+    };
+    assert!(!below.is_complete(50));
     Ok(())
 }
 
@@ -756,12 +789,12 @@ async fn ac1_dian_full_zip_exact_fields() -> Result<()> {
 }
 
 /// AC2: `dian_no_period.zip` yields USD 99.50, the legal-entity vendor, issued/due, no
-/// period; `is_complete(50)` is false (no period).
+/// period; `is_complete(50)` is true (issued stands in for the period, #37 AC5).
 #[tokio::test]
 async fn ac2_dian_no_period_zip_partial_fields() -> Result<()> {
     let envelope = zip_envelope(DIAN_NO_PERIOD_ZIP)?;
     let extraction = XmlInvoiceExtractor.extract(&envelope).await?;
-    assert!(!extraction.is_complete(50));
+    assert!(extraction.is_complete(50));
     assert_eq!(extraction.period, None);
 
     let amount = extraction.amount.ok_or("expected amount")?;

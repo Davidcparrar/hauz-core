@@ -24,6 +24,7 @@ pub(crate) fn extracted_bill(id: &str) -> Result<Bill> {
             date!(2026 - 01 - 01),
             date!(2026 - 01 - 31),
         )?),
+        issued: Some(date!(2026 - 01 - 05)),
         due: Some(date!(2026 - 02 - 15)),
         status: Status::Extracted,
     };
@@ -37,6 +38,7 @@ pub(crate) fn bare_needs_review_bill(id: &str) -> Result<Bill> {
         vendor: None,
         amount: None,
         period: None,
+        issued: None,
         due: None,
         status: Status::NeedsReview,
     };
