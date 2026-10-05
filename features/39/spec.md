@@ -65,7 +65,8 @@ display name (one RFC 2047-encoded, e.g. `=?UTF-8?Q?Energ=C3=ADa_Acme?=`).
 - AC8 [integration] WHEN a display-name `.eml` with an anchored amount and issue date is
   ingested via `ingest` with `TextExtractor` and `InMemoryStore` THE SYSTEM SHALL store a bill
   whose vendor is the display name.
-- AC9 [property] FOR ALL display names (printable strings, possibly padded with spaces)
+- AC9 [property] FOR ALL display names (printable strings without `"` or `\`, which would
+  break the quoted-string header itself, possibly padded with spaces)
   placed in `From: "<name>" <a@b.example>` THE SYSTEM SHALL parse without error and yield a
   `sender_name` that is `None` or non-empty, trimmed, and not equal to `sender` ignoring case.
 
