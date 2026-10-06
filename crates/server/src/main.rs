@@ -13,7 +13,7 @@ use hauz_core::extract::{
 use hauz_core::ingest::EXTRACTED_MIN_CONFIDENCE;
 use hauz_core::llm::{Config, LlmExtractor, LlmOptions, Pdftoppm, RigClient};
 use hauz_core::store::SqliteStore;
-use hauz_server::{AppState, router};
+use hauz_server::{ApiToken, AppState, router};
 
 /// Defaulted when `BIND_ADDR` is unset.
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:8080";
@@ -44,6 +44,10 @@ fn build_extractor(config: Option<Config>) -> Box<dyn Extractor> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let token = env::var("HAUZ_API_TOKEN")
+        .ok()
+        .and_then(ApiToken::new)
+        .ok_or_else(|| anyhow::anyhow!("HAUZ_API_TOKEN must be set to a non-blank value"))?;
     let database_url = env::var("DATABASE_URL")?;
     let db_path = database_url
         .strip_prefix("sqlite://")
@@ -53,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     let store = SqliteStore::open(Path::new(db_path)).await?;
     let extractor: Arc<dyn Extractor> = Arc::from(build_extractor(config));
-    let state = AppState::new(Arc::new(store), extractor);
+    let state = AppState::new(Arc::new(store), extractor, token);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     axum::serve(listener, router(state)).await?;

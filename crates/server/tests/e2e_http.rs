@@ -30,6 +30,7 @@ async fn post_email(router: Router, body: Vec<u8>) -> Result<(StatusCode, serde_
     let request = Request::builder()
         .method("POST")
         .uri("/v1/ingest/email")
+        .header("authorization", format!("Bearer {}", common::TOKEN))
         .body(Body::from(body))?;
     let response = router.oneshot(request).await?;
     let status = response.status();
@@ -48,6 +49,7 @@ async fn post_email_status(router: Router, body: Vec<u8>) -> Result<StatusCode> 
     let request = Request::builder()
         .method("POST")
         .uri("/v1/ingest/email")
+        .header("authorization", format!("Bearer {}", common::TOKEN))
         .body(Body::from(body))?;
     Ok(router.oneshot(request).await?.status())
 }
@@ -57,6 +59,7 @@ async fn get_bill(router: Router, id: &str) -> Result<(StatusCode, serde_json::V
     let request = Request::builder()
         .method("GET")
         .uri(format!("/v1/bills/{id}"))
+        .header("authorization", format!("Bearer {}", common::TOKEN))
         .body(Body::empty())?;
     let response = router.oneshot(request).await?;
     let status = response.status();

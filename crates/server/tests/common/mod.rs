@@ -10,9 +10,18 @@ use hauz_core::extract::{Chain, Extractor, PdfTextExtractor, TextExtractor, XmlI
 use hauz_core::store::{
     BillStore, BoxFuture, Error as StoreError, InsertOutcome, RawHash, SqliteStore,
 };
-use hauz_server::AppState;
+use hauz_server::{ApiToken, AppState};
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The bearer token every fixture `AppState` is configured with.
+pub(crate) const TOKEN: &str = "fixture-token-0123456789abcdef";
+
+/// [`TOKEN`] as the `ApiToken` the server state needs.
+#[allow(clippy::expect_used)] // the fixture constant is non-blank; a test-setup failure should abort
+fn api_token() -> ApiToken {
+    ApiToken::new(TOKEN).expect("fixture token is non-blank")
+}
 
 /// A unique tmp-file path for a `SqliteStore` under test, so parallel tests never collide.
 pub(crate) fn tmp_db_path() -> std::path::PathBuf {
@@ -31,7 +40,7 @@ pub(crate) async fn app() -> Result<(Router, Arc<SqliteStore>)> {
         Box::new(TextExtractor),
         Box::new(PdfTextExtractor),
     ]));
-    let state = AppState::new(store.clone(), extractor);
+    let state = AppState::new(store.clone(), extractor, api_token());
     Ok((hauz_server::router(state), store))
 }
 
@@ -44,7 +53,7 @@ pub(crate) async fn app_with_xml() -> Result<(Router, Arc<SqliteStore>)> {
         Box::new(TextExtractor),
         Box::new(PdfTextExtractor),
     ]));
-    let state = AppState::new(store.clone(), extractor);
+    let state = AppState::new(store.clone(), extractor, api_token());
     Ok((hauz_server::router(state), store))
 }
 
@@ -55,7 +64,7 @@ pub(crate) fn app_with_store(store: Arc<dyn BillStore>) -> Router {
         Box::new(TextExtractor),
         Box::new(PdfTextExtractor),
     ]));
-    hauz_server::router(AppState::new(store, extractor))
+    hauz_server::router(AppState::new(store, extractor, api_token()))
 }
 
 /// A `BillStore` every method fails on: the legitimate fake for exercising the 500 path, since
