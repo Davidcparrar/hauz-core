@@ -71,10 +71,10 @@ Mail arrives by webhook POST or Gmail fetch. No analytics or web UI.
   hex of the hash. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
   `NeedsReview` keeping present fields. A parse or extractor `Err` stores nothing; `notes` are not persisted.
 - `mail` — owns the mail-source edge: `trait MailSource { list(query, page) -> Page { ids,
-  next }, fetch_raw(&MessageId) }`, `GmailSource` (REST over `reqwest`, refresh token,
-  cached access token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, secrets redacted),
+  next }, fetch_raw(&MessageId) }`, `GmailSource` (REST over `reqwest`,
+  refresh token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, redacted), `query(&DateRange)` (UTC days),
   `fetch(source, query, ex, st) -> Vec<Fetched>`: `Email`/`Extract` errors
-  recorded per message, others abort; `Error { Config, Auth, Transport, Malformed, Ingest }`.
+  recorded per message, others abort; `Error { Config, Auth, Transport, Malformed, InvalidRange, Ingest }`.
 
 ## Entry points
 - server (`crates/server`, lib + `main.rs`): `AppState::new(store, extractor, ApiToken)` (`ApiToken::new`: blank ⇒ `None`,
@@ -84,7 +84,7 @@ Mail arrives by webhook POST or Gmail fetch. No analytics or web UI.
   reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([Xml, Text, PdfText])`, in `Escalate` over
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set (config error ⇒ abort). Untested by design.
-- cli (`crates/cli`, bin `hauz`): `hauz ingest <file.eml>` / `hauz fetch` (`mail::fetch`),
+- cli (`crates/cli`, bin `hauz`): `hauz ingest <file.eml>` / `hauz fetch [--after|--before <day>]`,
   `[--db <path>]` (default `./hauz.db`); config resolves before the DB opens. Stdout per
   message `Created|Duplicate <id>` or `Failed <gmail id>: <error>`. Exit 1 runtime, 2 usage.
 - tui (`crates/tui`, lib + bin `hauz-tui [--db <path>]`): pub `load` (`open_read_only` + `list`, before the terminal opens), `App` (`r` filters `needs_review`), `draw`. Exits as cli.
