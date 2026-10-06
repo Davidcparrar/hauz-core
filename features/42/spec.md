@@ -1,82 +1,82 @@
 # Spec: Gmail API source and `hauz fetch` (#42)
 
 ## Problem
-`hauz fetch` downloads every Gmail message under a configured label and
-runs `ingest` in-process: backfill and catch-up in one, idempotent via the raw hash.
+`hauz fetch` ingests the Gmail messages under a label in-process (idempotent via the raw
+hash); `--after`/`--before` bound the run, else it is a full backfill.
 
 ## Non-goals
-- `hauz gmail-auth` (consent flow): its own issue (spike §6); the token comes from env.
-- No server poll (#43), Pub/Sub, mailbox writes, multi-user, cursor, retry/backoff.
+- `hauz gmail-auth` (consent flow): #57; the token comes from env.
+- No server poll (#43), Pub/Sub, mailbox writes, multi-user, cursor, retries.
 
 ## Assumptions
-- [spike-verified] Token refresh = form POST of `client_id`, `client_secret`,
-  `refresh_token`, `grant_type=refresh_token`. Bad client ⇒ 401; bad bearer ⇒ Gmail 401.
-- [spike-verified] `messages.list`: `q`, `pageToken`, `maxResults` ≤500, which returns
-  `messages[{id}]` and `nextPageToken`. `messages.get?format=raw` returns `{"raw": base64url}`.
-- [spike-verified] `reqwest 0.13`, `default-features = false, features = ["json",
-  "rustls"]` (+ `form`/`query`: `serde_urlencoded` is already locked) adds no crate to
-  `Cargo.lock`, nor do dev-deps `axum`, `tokio` (`net`). `reqwest` is allowed (#42).
+- [spike-verified] Token refresh form fields, error shapes, `messages.list` paging
+  (`maxResults` ≤500), `format=raw` base64url: see spike findings.
+- [spike-verified] `reqwest 0.13` (`default-features = false`, `json`, `rustls`, `form`,
+  `query`) and dev-deps `axum`, `tokio` (`net`) add no crate to `Cargo.lock`.
 - [spike-verified] `base64` is locked twice ⇒ private std-only base64url decoder.
-- [unverified, not load-bearing] Revoked token ⇒ 400 `invalid_grant` (any token-endpoint
-  400/401 maps to `Auth` anyway). An empty list omits `messages` (`#[serde(default)]`).
-  Gmail's `raw` is byte-stable across calls (tests serve chosen bytes; **the first real run
-  must fetch twice and compare**).
-- Design: no cursor; each run re-downloads, cheap for one person's label.
-- Design: a per-message `ingest::Error::{Email, Extract}` (malformed input, decision #7)
-  is recorded and the run continues. `Store`/`Bill` and source errors abort, and bills
-  already stored stay stored.
-- Design: access token cached per `GmailSource` until `expires_in`; label required.
+- [unverified, not load-bearing] Revoked token ⇒ 400 `invalid_grant`; empty list omits
+  `messages`; `raw` is byte-stable (**first real run: fetch twice, compare**).
+- Design (Gate 2 amendment): no persisted cursor; the caller bounds a run by UTC days
+  (`--after` inclusive, `--before` exclusive) sent as epoch seconds, because Gmail reads
+  `YYYY/MM/DD` as Pacific midnight (Gmail API filtering guide).
+- Design: per-message `Email`/`Extract` errors are recorded and the run continues; other
+  errors abort, keeping stored bills.
+- Design: access token cached until `expires_in`; label required.
 
 ## Architecture delta
-PROMOTES: `mail`. New `core::mail`:
-- `MessageId` (non-empty newtype), `PageToken`, `Page { ids, next: Option<PageToken> }`.
+PROMOTES: `mail`:
+- `MessageId` (non-empty), `PageToken`, `Page { ids, next }`.
 - `trait MailSource: Send + Sync { list(&self, query: &str, page: Option<&PageToken>) ->
   BoxFuture<Result<Page, Error>>; fetch_raw(&self, &MessageId) -> BoxFuture<Result<Vec<u8>,
   Error>> }`.
-- `Credentials { client_id, client_secret, refresh_token }`, `GmailSource::new(creds)` /
-  `with_endpoints(creds, token_url, api_base)`.
-- `Config::from_env(get) -> Result<Option<Config>, Error>` reads `HAUZ_GMAIL_CLIENT_ID`
-  (absent ⇒ `None`), then requires `_CLIENT_SECRET`, `_REFRESH_TOKEN` and `_LABEL`. The
-  optional overrides are `_TOKEN_URL` and `_API_BASE`. `query()` = `label:<label>`
-  verbatim, and `source()` builds a `GmailSource`.
+- `Credentials`, `GmailSource::new(creds)` / `with_endpoints(creds, token_url, api_base)`.
+- `Config::from_env(get) -> Result<Option<Config>, Error>`: `HAUZ_GMAIL_CLIENT_ID` (absent
+  ⇒ `None`), then `_CLIENT_SECRET`, `_REFRESH_TOKEN`, `_LABEL` required; optional
+  `_TOKEN_URL`, `_API_BASE`; `source() -> GmailSource`.
+- `DateRange::parse(after: Option<&str>, before: Option<&str>) -> Result<DateRange, Error>`
+  (`YYYY-MM-DD`, `after < before`); `Config::query((`YYYY-MM-DD`, `after < before`); `Config::query(&DateRange)`range)` = `label:<label>`
+  [` after:<epoch>`][` before:<epoch>`], UTC midnights.
 - `async fn fetch(&dyn MailSource, query, &dyn Extractor, &dyn BillStore) ->
-  Result<Vec<Fetched { id, outcome: Result<Outcome, ingest::Error> }>, Error>`: all pages
-  (`maxResults=500`), then ingest in listing order.
-- `#[non_exhaustive] Error { Config { variable }, Auth, Transport, Malformed (each with a
-  reason), Ingest { id, source } }`.
+  Result<Vec<Fetched { id, outcome: Result<Outcome, ingest::Error> }>, Error>`: all pages,
+  then ingest in order.
+- `#[non_exhaustive] Error { Config { variable }, Auth, Transport, Malformed,
+  InvalidRange (each with a reason), Ingest { id, source } }`.
 
-`core` declares `reqwest` as above. CLI: `hauz fetch [--db <path>]`
-resolves LLM and Gmail config before opening the DB. An absent Gmail config is exit 1
-naming `HAUZ_GMAIL_CLIENT_ID`. It reuses `build_extractor` and prints `Created <id>` /
-`Duplicate <id>` / `Failed <gmail id>: <error>` per message, then exits 0, or 1 if any
-message failed or the run aborted.
+CLI: `hauz fetch [--db <path>] [--after <day>] [--before <day>]` (any order; bad range ⇒ exit 2) resolves LLM and Gmail config before opening the DB; absent Gmail
+config ⇒ exit 1 naming `HAUZ_GMAIL_CLIENT_ID`. Prints `Created <id>` / `Duplicate <id>` /
+`Failed <gmail id>: <error>` per message; exit 1 if any failed or the run aborted.
 
 ## Test plan
-Network fake: axum on `127.0.0.1:0` via `with_endpoints` (e2e: env overrides).
+Network fake: axum on `127.0.0.1:0`.
 - AC1 [unit] WHEN `GmailSource::list` is called THE SYSTEM SHALL POST the four token form
-  fields, then GET the list with `Bearer <access_token>`, the given `q`, `maxResults=500`
-  and any `pageToken`, returning ids and `next` (empty ids and `None` when both are
-  omitted).
-- AC2 [unit] WHEN `fetch_raw` gets `raw` as padded or unpadded base64url (with `-`/`_`)
-  THE SYSTEM SHALL return exactly the encoded bytes, with one token request across list +
-  fetches.
+  fields, then GET with `Bearer <access_token>`, the given `q`, `maxResults=500` and any
+  `pageToken`, returning ids and `next` (empty and `None` when both are omitted).
+- AC2 [unit] WHEN `fetch_raw` gets padded or unpadded base64url (with `-`/`_`) THE SYSTEM
+  SHALL return the exact bytes, with one token request across list + fetches.
 - AC3 [unit] WHEN the token endpoint answers 400 `invalid_grant` or 401, or Gmail 401/403,
-  THE SYSTEM SHALL return `Error::Auth`. Other non-2xx ⇒ `Transport`, and bad JSON or bad
+  THE SYSTEM SHALL return `Error::Auth`; other non-2xx ⇒ `Transport`; bad JSON or
   base64url ⇒ `Malformed`.
-- AC4 [unit] WHEN `Config::from_env` sees no client id THE SYSTEM SHALL return `Ok(None)`,
-  and a missing secret, token or label ⇒ `Error::Config` naming it. `Debug` of `Config`,
+- AC4 [unit] WHEN `Config::from_env` sees no client id THE SYSTEM SHALL return `Ok(None)`;
+  a missing secret, token or label ⇒ `Error::Config` naming it. `Debug` of `Config`,
   `Credentials`, `GmailSource` and every `Error` SHALL contain neither secret nor token.
-- AC5 [integration] WHEN `fetch` runs over a two-page fake source with two bills and one
-  sender-less message, via `TextExtractor` + `InMemoryStore`, THE SYSTEM SHALL return one
-  `Fetched` per id in listing order (`Created`, `Created`, `Err(Email)`) and store both
-  bills. A rerun SHALL return both bills as `Duplicate`.
+- AC5 [integration] WHEN `fetch` runs over a two-page fake source (two bills, one
+  sender-less message) with `TextExtractor` + `InMemoryStore` THE SYSTEM SHALL return
+  `Created`, `Created`, `Err(Email)` in listing order and store both bills; a rerun SHALL
+  return both as `Duplicate`.
 - AC6 [integration] WHEN `fetch_raw` fails mid-run THE SYSTEM SHALL return that `Err`,
-  keeping bills ingested before it.
+  keeping earlier bills.
 - AC7 [e2e] WHEN `hauz fetch --db <tmp>` runs against a fake server serving two messages
-  THE SYSTEM SHALL print `Created <hash-hex>` twice, exit 0; a rerun, `Duplicate`.
+  THE SYSTEM SHALL print `Created <hash-hex>` twice (rerun: `Duplicate`), exit 0.
 - AC8 [e2e] WHEN `HAUZ_GMAIL_REFRESH_TOKEN` is unset THE SYSTEM SHALL exit 1 naming it,
   creating no DB file. WHEN the token endpoint answers `invalid_grant` it SHALL exit 1
   with an auth error on stderr that omits the refresh token.
+- AC9 [unit] WHEN `DateRange::parse` gets valid days THE SYSTEM SHALL make
+  `Config::query` append `after:`/`before:` UTC-midnight epochs for the bounds given
+  (none ⇒ label only); a non-`YYYY-MM-DD` value or `after >= before` ⇒
+  `Error::InvalidRange`.
+- AC10 [e2e] WHEN `hauz fetch --after 2026-09-01 --before 2026-10-01` runs THE SYSTEM SHALL
+  send `q=label:<label> after:1788220800 before:1790812800`; WHEN `--after` is malformed or
+  not before `--before` it SHALL exit 2 creating no DB file.
 
 <!-- GATE 1 CHECKLIST (Leader self-check, before labelling `approved`):
      [x] every criterion is EARS-shaped, tagged, numbered, and names only pub behavior
