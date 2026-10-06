@@ -125,14 +125,8 @@ async fn ac3_wrong_credentials_are_unauthorized() -> Result<()> {
     flipped.replace_range(0..1, "X");
     let wrong = [
         format!("Bearer {flipped}"),
-        format!(
-            "Bearer {}",
-            token
-                .trim_end_matches(|_| true)
-                .chars()
-                .take(token.len() - 1)
-                .collect::<String>()
-        ),
+        format!("Bearer {}", &token[..token.len() - 1]),
+        "Bearer ".to_owned(),
         format!("Bearer {token}x"),
         format!("Basic {token}"),
         "Bearer".to_owned(),
