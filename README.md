@@ -120,5 +120,5 @@ This repo runs on a spec-driven, test-first Claude Code harness with one human g
 merge. The Leader drafts and self-checks a spec per GitHub issue, an implementer agent
 writes tests first, a reviewer agent reruns `verify.sh`, and the human reads spec, review and
 diff in the PR. The pipeline and every rule: `CLAUDE.md`; project rules: `docs/constitution.md`;
-one-line decisions log: `docs/decisions.md`; per-feature spec, review and spike notes:
+one-line decisions log: `docs/decisions.md`; agreed-but-unfiled future work: `docs/backlog.md`; per-feature spec, review and spike notes:
 `features/<n>/`. Template origin: [harness-sdd](https://github.com/Davidcparrar/harness-sdd).
