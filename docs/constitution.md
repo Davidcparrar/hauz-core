@@ -48,6 +48,10 @@ domain value. All state is a core type held in an `Entity<_>`. App tests are `[e
 `default-members = ["crates/core", "crates/server"]` so plain `cargo test` skips the app;
 `verify.sh` still builds it.
 
+## TUI (`crates/tui`)
+Same shape as the app: tests are `[e2e]` only — `ratatui::backend::TestBackend` renders via the
+pub API in `crates/tui/tests/e2e_render.rs`, the process via `assert_cmd` in `e2e_cli.rs`.
+
 ## Budgets (verify-enforced)
 constitution ≤500 words · architecture ≤1000 · spec ≤800 · spike findings ≤400 ·
 agent return ≤300 tokens · implementer context ≈15k tokens (larger ⇒ split the feature).
