@@ -33,6 +33,9 @@ rig-core = { version = "0.43", default-features = false, features = ["rustls", "
 schemars = "1"
 sha2 = "0.11"
 time = { version = "0.3", features = ["parsing", "formatting", "macros", "serde"] }
+# Read-only TUI bill browser (decided 2026-10-04, docs/decisions.md #41)
+ratatui = "0.30"
+crossterm = "0.29"
 
 # rustc lints stay `warn`: a `deny` here would break `cargo test` mid red-green.
 # verify.sh runs clippy with `-D warnings`, which promotes everything below.
