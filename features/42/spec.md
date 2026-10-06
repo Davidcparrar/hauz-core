@@ -34,8 +34,8 @@ PROMOTES: `mail`:
   ⇒ `None`), then `_CLIENT_SECRET`, `_REFRESH_TOKEN`, `_LABEL` required; optional
   `_TOKEN_URL`, `_API_BASE`; `source() -> GmailSource`.
 - `DateRange::parse(after: Option<&str>, before: Option<&str>) -> Result<DateRange, Error>`
-  (`YYYY-MM-DD`, `after < before`); `Config::query((`YYYY-MM-DD`, `after < before`); `Config::query(&DateRange)`range)` = `label:<label>`
-  [` after:<epoch>`][` before:<epoch>`], UTC midnights.
+  (`YYYY-MM-DD`, `after < before`); `Config::query(&range)` =
+  `label:<label>` [` after:<epoch>`][` before:<epoch>`], UTC midnights.
 - `async fn fetch(&dyn MailSource, query, &dyn Extractor, &dyn BillStore) ->
   Result<Vec<Fetched { id, outcome: Result<Outcome, ingest::Error> }>, Error>`: all pages,
   then ingest in order.
