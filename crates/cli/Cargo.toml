@@ -19,3 +19,5 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["net"] }

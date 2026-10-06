@@ -36,6 +36,8 @@ time = { version = "0.3", features = ["parsing", "formatting", "macros", "serde"
 # Read-only TUI bill browser (decided 2026-10-04, docs/decisions.md #41)
 ratatui = "0.30"
 crossterm = "0.29"
+# Gmail REST client (decided for #42; adds no crate to Cargo.lock)
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form", "query"] }
 
 # rustc lints stay `warn`: a `deny` here would break `cargo test` mid red-green.
 # verify.sh runs clippy with `-D warnings`, which promotes everything below.

@@ -9,6 +9,7 @@ pub mod email;
 pub mod extract;
 pub mod ingest;
 pub mod llm;
+pub mod mail;
 pub mod store;
 pub mod zip;
 
