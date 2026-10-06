@@ -14,8 +14,11 @@ library (`crates/core`), the HTTP server (`crates/server`), the CLI (`crates/cli
 
 ## Server
 ```
-DATABASE_URL=./hauz.db BIND_ADDR=127.0.0.1:8080 cargo run -p hauz-server
+HAUZ_API_TOKEN=$(openssl rand -hex 32) DATABASE_URL=./hauz.db BIND_ADDR=127.0.0.1:8080 cargo run -p hauz-server
 ```
+`HAUZ_API_TOKEN` is required: the server refuses to start if it is unset or blank. Every `/v1`
+request must send `Authorization: Bearer <token>`; a missing or wrong token gets
+`401 {"error":"unauthorized"}`.
 - `POST /v1/ingest/email` with the raw RFC 5322 bytes as the body (any `Content-Type`,
   ≤ 25 MiB): `201 {"id": …}` created, `200 {"id": …}` duplicate, `400` unparseable mail
   or attachment, `500` on a store failure.

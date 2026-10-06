@@ -5,7 +5,7 @@
 ## Purpose
 - Turn an emailed bill (body, attachments) into a structured `Bill`.
 - Persist every record idempotently (same email ⇒ one bill).
-- Stay honest: what cannot be read is stored `needs_review`, never guessed.
+- Stay honest: unreadable ⇒ `needs_review`, never guessed.
 
 Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI.
 
@@ -45,8 +45,7 @@ Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI
   `PdfTextExtractor` (same scanner over each PDF's `text_layer(&[u8]) ->
   Result<Option<String>>`, pdf-extract under `catch_unwind`; image-only ⇒ `NoTextLayer`,
   corrupt ⇒ `Error::Pdf`),
-  `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` amount, supplier, dates,
-  period at confidence 100, scoped under `Invoice`; unsupported zip ⇒ `UnreadableArchive`, malformed ⇒ `Error::Zip`), `Chain`
+  `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` fields at confidence 100; unsupported zip ⇒ `UnreadableArchive`, malformed ⇒ `Error::Zip`), `Chain`
   (`Chain::new(Vec<Box<dyn Extractor>>)`, an `Extractor`: runs each in order, first
   `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`:
   `primary` if complete, else merged with `secondary`; either `Err` propagates).
@@ -73,10 +72,11 @@ Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI
   `NeedsReview` keeping present fields. A parse or extractor `Err` stores nothing; `notes` are not persisted.
 
 ## Entry points
-- server (`crates/server`, lib + `main.rs`): `AppState::new(Arc<dyn BillStore>, Arc<dyn
-  Extractor>)`, `pub fn router(state: AppState) -> axum::Router`, `MAX_BODY_BYTES` (25 MiB ⇒ 413). `POST /v1/ingest/email` takes raw RFC 5322 bytes: 201 created / 200 duplicate, body `{"id"}`, 400 on `ingest::Error::{Email,
+- server (`crates/server`, lib + `main.rs`): `AppState::new(store, extractor, ApiToken)` (`ApiToken::new`: blank ⇒ `None`,
+  `Debug` redacted), `router(state)`, `MAX_BODY_BYTES` (25 MiB ⇒ 413). Every `/v1` route needs
+  `Authorization: Bearer <token>` (constant-time), else 401 `"unauthorized"` pre-body. `POST /v1/ingest/email` takes raw RFC 5322 bytes: 201 created / 200 duplicate, body `{"id"}`, 400 on `ingest::Error::{Email,
   Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: 200 `Bill` JSON (`BillDraft` shape), else 404. `main.rs`
-  reads `DATABASE_URL` (SQLite path) and `BIND_ADDR` (default
+  reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([XmlInvoiceExtractor, TextExtractor, PdfTextExtractor])`, wrapped in `Escalate` over
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set (config error ⇒ abort). Untested by design.
 - cli (`crates/cli`, bin-only, binary `hauz`): `hauz ingest <file.eml> [--db <sqlite path>]`
@@ -90,7 +90,6 @@ Spaces bucket from one Droplet (#22).
 ## Planned (filed, not built)
 - `mail` (#42, #43): mail-source edge trait, `GmailSource` (REST over `reqwest`, refresh token,
   `gmail.readonly`, label poll) ingesting in-process; `hauz gmail-auth`/`fetch`; server poll.
-- Bearer auth on `/v1` (#40).
 
 ## Risks / debt
 - Pre-#38 non-ISO currency rows are `Corrupt`, failing `list`. A slightly wrong PDF xref reads empty.
