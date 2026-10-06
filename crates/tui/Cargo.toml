@@ -1,0 +1,28 @@
+[package]
+name = "hauz-tui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "hauz_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hauz-tui"
+path = "src/main.rs"
+
+[dependencies]
+hauz-core = { path = "../core" }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+time = { workspace = true }

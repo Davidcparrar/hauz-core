@@ -3,21 +3,20 @@
      docs/decisions.md. -->
 
 ## Purpose
-- Turn an emailed bill (body and/or attachments) into a structured `Bill`: vendor, amount,
-  currency, period, due date.
-- Persist every record durably and idempotently (same email ⇒ one bill).
+- Turn an emailed bill (body, attachments) into a structured `Bill`.
+- Persist every record idempotently (same email ⇒ one bill).
 - Stay honest: what cannot be read is stored `needs_review`, never guessed.
 
 Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI.
 
 ## Crate map
 ```
-┌──────────────┐   ┌──────────────┐
-│ server (bin) │   │ cli (bin)    │   thin shells: email in, core calls out
-│ axum         │   │ hauz ingest  │
-└──────┬───────┘   └──────┬───────┘
-       └────────┬─────────┘
-                ▼
+┌──────────────┐ ┌─────────────┐ ┌──────────────┐
+│ server (bin) │ │ cli (bin)   │ │ tui (bin)    │  thin shells
+│ axum         │ │ hauz ingest │ │ read-only    │
+└──────┬───────┘ └──────┬──────┘ └──────┬───────┘
+       └────────────────┼───────────────┘
+                        ▼
         ┌───────────────┐
         │ core (lib)    │   all domain logic; the only crate specs test
         └───────────────┘
@@ -53,7 +52,7 @@ Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI
   `primary` if complete, else merged with `secondary`; either `Err` propagates).
 - `store` — owns persistence: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
   `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`; async `BoxFuture`,
-  `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL), `InMemoryStore` test fake.
+  `dyn`-safe), `SqliteStore` (sqlx, embedded migrations, WAL; `open_read_only` creates/migrates nothing), `InMemoryStore` test fake.
 - `llm` — owns the LLM edges (injectable traits) and the extractor over them: `trait LlmClient { fn complete(&self, &LlmRequest) -> BoxFuture<Result<String,
   Error>> }` over `LlmRequest { instructions, parts: Vec<Part { Text, Png, Pdf }>, schema:
   schemars::Schema }`, `RigClient::new(Provider, model)` (sole rig-core importer; `Provider { Ollama, Anthropic, OpenAi }`, keys redacted in `Debug`; `Pdf` on Ollama ⇒ `Unsupported`),
@@ -82,6 +81,7 @@ Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set (config error ⇒ abort). Untested by design.
 - cli (`crates/cli`, bin-only, binary `hauz`): `hauz ingest <file.eml> [--db <sqlite path>]`
   (any order; `--db` defaults to `./hauz.db`) reads the file and LLM env (config error ⇒ exit 1 before the DB opens), runs the server's extractor through `ingest`; stdout is `Created <id>` or `Duplicate <id>`. Exit 0; 1 on a runtime error, 2 on a usage error (message on stderr). Args parsed by hand.
+- tui (`crates/tui`, lib + bin `hauz-tui`): `hauz-tui [--db <path>]` (default `./hauz.db`); pub `load` (`open_read_only` + `list`, before the terminal opens), `App` (`r` filters `needs_review`) and `draw`. Exit 1 runtime, 2 usage.
 
 ## Storage
 SQLite through sqlx, one file, WAL mode; a Litestream sidecar replicates the WAL to a DigitalOcean
@@ -90,10 +90,8 @@ Spaces bucket from one Droplet (#22).
 ## Planned (filed, not built)
 - `mail` (#42, #43): mail-source edge trait, `GmailSource` (REST over `reqwest`, refresh token,
   `gmail.readonly`, label poll) ingesting in-process; `hauz gmail-auth`/`fetch`; server poll.
-- `crates/tui` (#41): read-only ratatui bill browser over the SQLite file.
 - Bearer auth on `/v1` (#40).
 
 ## Risks / debt
-- Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (pre-#37 period rule); a tax ID
-  stored as `NIT` money (fixed by #38; such rows read as `Corrupt`). A slightly wrong PDF xref reads empty.
+- Pre-#38 non-ISO currency rows are `Corrupt`, failing `list`. A slightly wrong PDF xref reads empty.
 - Single-writer SQLite: more writers need Turso/Postgres.

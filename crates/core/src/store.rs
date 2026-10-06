@@ -220,6 +220,22 @@ impl SqliteStore {
         sqlx::migrate!("./migrations").run(&pool).await?;
         Ok(Self { pool })
     }
+
+    /// Opens an existing SQLite file read-only: never creates it, never changes the journal
+    /// mode, never migrates. Safe beside a live writer on a WAL database. `insert` through
+    /// this handle fails with [`Error::Backend`].
+    ///
+    /// # Errors
+    /// Returns [`Error::Backend`] when the file does not exist or cannot be opened.
+    pub async fn open_read_only(path: &Path) -> Result<Self, Error> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false)
+            .read_only(true)
+            .busy_timeout(WRITE_LOCK_WAIT);
+        let pool = SqlitePoolOptions::new().connect_with(options).await?;
+        Ok(Self { pool })
+    }
 }
 
 impl BillStore for SqliteStore {
