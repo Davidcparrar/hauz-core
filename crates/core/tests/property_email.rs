@@ -19,3 +19,17 @@ proptest! {
         prop_assert_eq!(envelope.sender, "alice@example.com");
     }
 }
+
+proptest! {
+    #[test]
+    fn ac9_sender_name_is_none_or_clean(name in "[ !#-\\[\\]-~]{0,24}") {
+        let raw = format!("From: \"{name}\" <a@b.example>\r\nSubject: S\r\n\r\nbody\r\n");
+
+        let envelope = Envelope::parse(raw.as_bytes()).expect("fixed From always yields a sender");
+        if let Some(parsed) = envelope.sender_name {
+            prop_assert!(!parsed.is_empty());
+            prop_assert_eq!(parsed.trim(), parsed.as_str());
+            prop_assert!(!parsed.eq_ignore_ascii_case(&envelope.sender));
+        }
+    }
+}

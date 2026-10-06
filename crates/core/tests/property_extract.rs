@@ -143,6 +143,7 @@ fn envelope() -> Envelope {
     Envelope {
         subject: None,
         sender: "billing@example.com".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -177,6 +178,7 @@ fn zip_envelope(bytes: Vec<u8>) -> Result<Envelope, hauz_core::email::Error> {
     Ok(Envelope {
         subject: None,
         sender: "billing@example.com".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,
@@ -236,6 +238,7 @@ fn unsupported_zip_envelope(layout: &[(bool, bool)]) -> Result<Envelope, hauz_co
     Ok(Envelope {
         subject: None,
         sender: "billing@example.com".to_string(),
+        sender_name: None,
         date: None,
         text: None,
         html: None,

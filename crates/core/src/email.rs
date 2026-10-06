@@ -97,6 +97,10 @@ pub struct Envelope {
     pub subject: Option<String>,
     /// The bare addr-spec of `From`, else `Sender`.
     pub sender: String,
+    /// The decoded, trimmed display name of the address `sender` comes from. `None` when
+    /// that address has no display name, the name is blank, or it only repeats `sender`
+    /// (ignoring ASCII case).
+    pub sender_name: Option<String>,
     /// The `Date` header as a UTC instant, `None` unless it parses to a valid date.
     pub date: Option<OffsetDateTime>,
     /// The plain-text body: the first `text/plain` part, or the first HTML part
@@ -119,7 +123,7 @@ impl Envelope {
             .parse(raw)
             .ok_or(Error::Malformed)?;
 
-        let sender = sender_of(&message).ok_or(Error::MissingSender)?;
+        let (sender, sender_name) = sender_of(&message).ok_or(Error::MissingSender)?;
         let subject = message.subject().map(str::to_string);
         let date = message
             .date()
@@ -132,6 +136,7 @@ impl Envelope {
         Ok(Self {
             subject,
             sender,
+            sender_name,
             date,
             text,
             html,
@@ -153,18 +158,27 @@ fn html_of(message: &Message<'_>) -> Option<String> {
     }
 }
 
-/// The bare addr-spec of `From`, else `Sender`.
-fn sender_of(message: &Message<'_>) -> Option<String> {
-    addr_spec(message.from())
-        .or_else(|| addr_spec(message.sender()))
-        .map(str::to_string)
+/// The addr-spec of `From`, else `Sender`, with the display name of that same address
+/// (trimmed; `None` when blank or equal to the address ignoring ASCII case).
+fn sender_of(message: &Message<'_>) -> Option<(String, Option<String>)> {
+    let addr =
+        first_addr_with_spec(message.from()).or_else(|| first_addr_with_spec(message.sender()))?;
+    let spec = addr.address()?;
+    let name = addr
+        .name()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case(spec))
+        .map(str::to_string);
+    Some((spec.to_string(), name))
 }
 
-/// The first addr-spec in an address field, if any.
-fn addr_spec<'a>(address: Option<&'a mail_parser::Address<'a>>) -> Option<&'a str> {
+/// The first address of an address field, if it carries an addr-spec.
+fn first_addr_with_spec<'a>(
+    address: Option<&'a mail_parser::Address<'a>>,
+) -> Option<&'a mail_parser::Addr<'a>> {
     address
         .and_then(mail_parser::Address::first)
-        .and_then(mail_parser::Addr::address)
+        .filter(|addr| addr.address().is_some())
 }
 
 /// Maps one `attachments()` part to a [`Document`].

@@ -434,3 +434,19 @@ async fn ac7_tax_id_email_stores_cop_total() -> Result<()> {
     );
     Ok(())
 }
+
+const DISPLAY_NAME_BILL: &[u8] = include_bytes!("fixtures/display_name_bill.eml");
+
+#[tokio::test]
+async fn ac8_display_name_becomes_stored_vendor() -> Result<()> {
+    let store = hauz_core::store::InMemoryStore::new();
+
+    let outcome = ingest(DISPLAY_NAME_BILL, &TextExtractor, &store).await?;
+    let Outcome::Created(id) = outcome else {
+        return Err(format!("expected Created, got {outcome:?}").into());
+    };
+    let bill = store.get(&id).await?.ok_or("missing bill")?;
+    assert_eq!(bill.vendor(), Some(&Vendor::new("Acme Billing")?));
+    assert_eq!(bill.issued(), Some(date!(2026 - 10 - 01)));
+    Ok(())
+}

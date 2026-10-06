@@ -97,3 +97,56 @@ fn ac7_mime_type_new_lowercases_and_rejects_malformed_values() {
         );
     }
 }
+
+const DISPLAY_NAME: &[u8] = include_bytes!("fixtures/display_name.eml");
+const DISPLAY_NAME_ENCODED: &[u8] = include_bytes!("fixtures/display_name_encoded.eml");
+const DISPLAY_NAME_SENDER_HEADER: &[u8] = include_bytes!("fixtures/display_name_sender_header.eml");
+
+/// Parses a minimal message whose `From` header is `from`.
+fn parse_from(from: &str) -> Result<Envelope> {
+    let raw = format!("From: {from}\r\nSubject: S\r\nContent-Type: text/plain\r\n\r\nbody\r\n");
+    Ok(Envelope::parse(raw.as_bytes())?)
+}
+
+#[test]
+fn ac1_sender_name_is_trimmed_display_name() -> Result<()> {
+    let envelope = Envelope::parse(DISPLAY_NAME)?;
+
+    assert_eq!(
+        envelope.sender_name,
+        Some("Amazon Web Services".to_string())
+    );
+    assert_eq!(envelope.sender, "billing@aws.example");
+    Ok(())
+}
+
+#[test]
+fn ac2_sender_name_decodes_rfc2047() -> Result<()> {
+    let envelope = Envelope::parse(DISPLAY_NAME_ENCODED)?;
+
+    assert_eq!(envelope.sender_name, Some("Energía Acme".to_string()));
+    Ok(())
+}
+
+#[test]
+fn ac3_sender_name_none_when_absent_blank_or_repeats_address() -> Result<()> {
+    assert_eq!(parse_from("billing@aws.example")?.sender_name, None);
+    assert_eq!(
+        parse_from("\"   \" <billing@aws.example>")?.sender_name,
+        None
+    );
+    assert_eq!(
+        parse_from("\"Billing@AWS.example\" <billing@aws.example>")?.sender_name,
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn ac4_sender_header_supplies_name_when_from_absent() -> Result<()> {
+    let envelope = Envelope::parse(DISPLAY_NAME_SENDER_HEADER)?;
+
+    assert_eq!(envelope.sender, "noreply@github.example");
+    assert_eq!(envelope.sender_name, Some("GitHub".to_string()));
+    Ok(())
+}

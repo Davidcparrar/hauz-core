@@ -8,8 +8,7 @@
 - Persist every record durably and idempotently (same email ⇒ one bill).
 - Stay honest: what cannot be read is stored `needs_review`, never guessed.
 
-Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analytics; a web UI
-(later, Google SSO).
+Mail arrives by webhook POST or Gmail (planned). Out of scope: analytics, web UI.
 
 ## Crate map
 ```
@@ -32,7 +31,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
   `Extracted` needs vendor + amount + (period or `issued`); other fields optional.
 - `email` — owns MIME decoding (mail-parser): `Envelope::parse(&[u8]) ->
   Result<Envelope, Error>`. `Envelope` and `Document` are pub-field records: `subject`,
-  `sender` (addr-spec, required), `date` (UTC), `text`, `html`, `documents: Vec<Document
+  `sender` (addr-spec, required), `sender_name` (trimmed display name, `None` if blank or = `sender`), `date` (UTC), `text`, `html`, `documents: Vec<Document
   { mime: MimeType, filename, bytes }>` per attachment, `message/rfc822` not recursed. `MimeType`:
   lowercase `type/subtype`. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "envelope ⇒ candidate fields": `trait Extractor: Send +
@@ -43,7 +42,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document }, UnreadableArchive { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
   Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
-  field, notes unioned, deterministic ties: order-insensitive, idempotent), `TextExtractor` (no-regex scanner over `text` and stripped `html`; a bare `$` is no currency),
+  field, notes unioned, deterministic ties: order-insensitive, idempotent), `TextExtractor` (no-regex scanner over `text` and stripped `html`; a bare `$` is no currency; vendor `sender_name` else domain, confidence 20),
   `PdfTextExtractor` (same scanner over each PDF's `text_layer(&[u8]) ->
   Result<Option<String>>`, pdf-extract under `catch_unwind`; image-only ⇒ `NoTextLayer`,
   corrupt ⇒ `Error::Pdf`),
@@ -86,7 +85,7 @@ Mail arrives by webhook POST or (planned) the Gmail fetcher. Out of scope: analy
 
 ## Storage
 SQLite through sqlx, one file, WAL mode; a Litestream sidecar replicates the WAL to a DigitalOcean
-Spaces bucket from one Droplet (#22). AWS S3 later is configuration only.
+Spaces bucket from one Droplet (#22).
 
 ## Planned (filed, not built)
 - `mail` (#42, #43): mail-source edge trait, `GmailSource` (REST over `reqwest`, refresh token,
@@ -96,5 +95,5 @@ Spaces bucket from one Droplet (#22). AWS S3 later is configuration only.
 
 ## Risks / debt
 - Corpus replay (7 bills, 2026-10-04, no LLM): 0 `Extracted` (pre-#37 period rule); a tax ID
-  stored as `NIT` money (fixed by #38; such rows read as `Corrupt`). A slightly wrong PDF xref reads as empty.
-- Single-writer SQLite suits one service; more writers need Turso/Postgres.
+  stored as `NIT` money (fixed by #38; such rows read as `Corrupt`). A slightly wrong PDF xref reads empty.
+- Single-writer SQLite: more writers need Turso/Postgres.

@@ -185,6 +185,7 @@ fn envelope(text: Option<&str>, html: Option<&str>, documents: Vec<Document>) ->
     Envelope {
         subject: None,
         sender: "billing@example.com".to_owned(),
+        sender_name: None,
         date: None,
         text: text.map(str::to_owned),
         html: html.map(str::to_owned),
