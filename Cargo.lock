@@ -1170,6 +1170,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "axum",
  "hauz-core",
  "tokio",
 ]
@@ -1178,9 +1179,11 @@ dependencies = [
 name = "hauz-core"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "mail-parser",
  "pdf-extract",
  "proptest",
+ "reqwest",
  "rig-core",
  "schemars",
  "serde",
@@ -2603,6 +2606,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

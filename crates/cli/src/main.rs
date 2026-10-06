@@ -17,6 +17,7 @@ use hauz_core::extract::{
 };
 use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Outcome, ingest};
 use hauz_core::llm::{Config, LlmExtractor, LlmOptions, Pdftoppm, RigClient};
+use hauz_core::mail;
 use hauz_core::store::SqliteStore;
 
 use args::{Command, USAGE, parse};
@@ -34,6 +35,16 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Ingest { path, db } => run_ingest(&path, &db).await,
+        Command::Fetch { db, after, before } => {
+            let range = match mail::DateRange::parse(after.as_deref(), before.as_deref()) {
+                Ok(range) => range,
+                Err(e) => {
+                    eprintln!("{e}\n{USAGE}");
+                    std::process::exit(2);
+                }
+            };
+            run_fetch(&db, &range).await
+        }
     }
 }
 
@@ -49,6 +60,35 @@ async fn run_ingest(path: &Path, db: &Path) -> anyhow::Result<()> {
     match outcome {
         Outcome::Created(id) => println!("Created {}", id.as_str()),
         Outcome::Duplicate(id) => println!("Duplicate {}", id.as_str()),
+    }
+    Ok(())
+}
+
+/// Resolves the LLM and Gmail config before opening `db`, downloads every message under the
+/// configured label (within `range`) and ingests it in-process. Prints one line per message; exits 1 when any
+/// message failed, and (through `?`) when the run aborted.
+async fn run_fetch(db: &Path, range: &mail::DateRange) -> anyhow::Result<()> {
+    let llm = Config::from_env(|key| env::var(key).ok())?;
+    let gmail = mail::Config::from_env(|key| env::var(key).ok())?
+        .context("HAUZ_GMAIL_CLIENT_ID is not set: Gmail is not configured")?;
+    let extractor = build_extractor(llm);
+    let store = SqliteStore::open(db).await?;
+
+    let source = gmail.source();
+    let fetched = mail::fetch(&source, &gmail.query(range), &*extractor, &store).await?;
+    let mut failed = false;
+    for item in &fetched {
+        match &item.outcome {
+            Ok(Outcome::Created(id)) => println!("Created {}", id.as_str()),
+            Ok(Outcome::Duplicate(id)) => println!("Duplicate {}", id.as_str()),
+            Err(e) => {
+                failed = true;
+                println!("Failed {}: {e}", item.id.as_str());
+            }
+        }
+    }
+    if failed {
+        std::process::exit(1);
     }
     Ok(())
 }

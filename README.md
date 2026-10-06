@@ -78,6 +78,63 @@ hauz ingest path/to/bill.eml --db /tmp/replay.db
   nothing new, so a replay is safe to repeat. To compare runs with and without the LLM,
   use two database files. Delete the `.db` file (and its `-wal`/`-shm` siblings) to start over.
 
+## CLI: fetch bills from Gmail
+`hauz fetch` lists the messages under one Gmail label through the Gmail API, downloads each
+raw message and runs it through the same pipeline as `hauz ingest`. Access is read-only
+(`gmail.readonly`); hauz never relabels, marks read or deletes mail.
+
+```
+hauz fetch --db /tmp/replay.db                                    # everything under the label
+hauz fetch --after 2026-09-01 --db /tmp/replay.db                 # since 1 Sep
+hauz fetch --after 2026-09-01 --before 2026-10-01 --db /tmp/replay.db   # September only
+```
+- **Dates:** `YYYY-MM-DD`, UTC days. `--after` is inclusive and `--before` exclusive. Either may
+  be omitted, and without both the whole label is fetched (a backfill). A malformed day or
+  `--after` not before `--before` is a usage error (exit 2).
+- **Output:** one line per message, `Created <id>`, `Duplicate <id>` or
+  `Failed <gmail id>: <error>`. Re-running over the same range prints `Duplicate`, so overlap
+  is safe.
+- **Errors:** an unparseable message or attachment is reported as `Failed` and the run
+  continues. An auth, network or store error stops the run. Bills stored before the stop
+  stay stored. Exit 1 if anything failed, 0 otherwise.
+
+| Variable | When | Value |
+|---|---|---|
+| `HAUZ_GMAIL_CLIENT_ID` | required for `hauz fetch` | OAuth client id (Desktop app) |
+| `HAUZ_GMAIL_CLIENT_SECRET` | required | that client's secret |
+| `HAUZ_GMAIL_REFRESH_TOKEN` | required | see below; can read the **whole** mailbox |
+| `HAUZ_GMAIL_LABEL` | required | label name as Gmail search writes it, e.g. `bills` |
+| `HAUZ_GMAIL_TOKEN_URL` / `HAUZ_GMAIL_API_BASE` | optional | endpoint overrides (tests) |
+
+**One-time Google Cloud setup:**
+1. In the Google Cloud project, enable the Gmail API.
+2. Create an OAuth client of type **Desktop app**.
+3. Set the OAuth consent screen to **In production**. In Testing mode, refresh tokens for
+   this scope expire after 7 days. For personal use, accept the unverified-app warning.
+4. In Gmail, create the label (e.g. `bills`) and a filter that applies it to bill senders.
+   Label older bills by hand to backfill them.
+
+**Getting a refresh token** (until `hauz gmail-auth`, #57, exists):
+1. Open this URL in a browser, with your client id filled in:
+   ```
+   https://accounts.google.com/o/oauth2/v2/auth?client_id=<CLIENT_ID>&redirect_uri=http://127.0.0.1:8085&response_type=code&scope=https://www.googleapis.com/auth/gmail.readonly&access_type=offline&prompt=consent
+   ```
+2. After you consent, the browser lands on a page that fails to load at `127.0.0.1:8085`.
+   Copy the `code=` value from the address bar. It is URL-encoded, so turn `%2F` back into
+   `/`.
+3. Exchange the code for tokens:
+   ```
+   curl -s https://oauth2.googleapis.com/token -d client_id=<CLIENT_ID> -d client_secret=<CLIENT_SECRET> \
+     -d code=<CODE> -d grant_type=authorization_code -d redirect_uri=http://127.0.0.1:8085
+   ```
+4. Store the response's `refresh_token` as `HAUZ_GMAIL_REFRESH_TOKEN`, in the environment only.
+   Never put it in the repo, a `.env` file or the image. Revoke it at
+   myaccount.google.com/permissions.
+
+**First real run:** fetch the same range twice. The second run must print only `Duplicate`,
+which confirms Gmail returns the same raw bytes every time. Use the throwaway database
+recipe from the section above.
+
 ## TUI: browse the stored bills
 `hauz-tui` opens a database **read-only** and lists every bill. It never creates, migrates or
 writes the file, so it can run beside the server or between replays.
