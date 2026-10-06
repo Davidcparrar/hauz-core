@@ -1,12 +1,11 @@
 //! Hand-parsed grammar for `hauz`: `hauz ingest <path> [--db <path>]` (any order after
-//! `ingest`), `hauz fetch [--db <path>]`, or `hauz -h|--help`. No `clap`: the grammar is three tokens.
+//! `ingest`), `hauz fetch [--db <path>] [--after <day>] [--before <day>]`, or `hauz -h|--help`. No `clap`: the grammar is three tokens.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// Printed on usage errors (stderr, exit 2) and on `-h`/`--help` (stdout, exit 0).
-pub(crate) const USAGE: &str =
-    "usage: hauz ingest <file.eml> [--db <sqlite path>]\n       hauz fetch [--db <sqlite path>]";
+pub(crate) const USAGE: &str = "usage: hauz ingest <file.eml> [--db <sqlite path>]\n       hauz fetch [--db <sqlite path>] [--after <YYYY-MM-DD>] [--before <YYYY-MM-DD>]";
 
 /// `--db`'s default when the flag is absent.
 const DEFAULT_DB: &str = "hauz.db";
@@ -16,8 +15,12 @@ const DEFAULT_DB: &str = "hauz.db";
 pub(crate) enum Command {
     /// `hauz ingest <path> [--db <path>]`.
     Ingest { path: PathBuf, db: PathBuf },
-    /// `hauz fetch [--db <path>]`.
-    Fetch { db: PathBuf },
+    /// `hauz fetch [--db <path>] [--after <day>] [--before <day>]`; days are validated later.
+    Fetch {
+        db: PathBuf,
+        after: Option<String>,
+        before: Option<String>,
+    },
     /// `hauz -h` or `hauz --help`.
     Help,
 }
@@ -77,18 +80,22 @@ fn parse_ingest(args: impl Iterator<Item = OsString>) -> Result<Command, UsageEr
     Ok(Command::Ingest { path, db })
 }
 
-/// Parses the tokens after `fetch`: only an optional `--db <path>`.
+/// Parses the tokens after `fetch`: optional `--db <path>`, `--after <day>`, `--before
+/// <day>`, in any order.
 fn parse_fetch(mut args: impl Iterator<Item = OsString>) -> Result<Command, UsageError> {
     let mut db: Option<PathBuf> = None;
+    let mut after: Option<String> = None;
+    let mut before: Option<String> = None;
     while let Some(arg) = args.next() {
         let arg_str = arg.to_string_lossy().into_owned();
-        if arg_str == "--db" {
-            let value = args.next().ok_or_else(|| UsageError::new("--db"))?;
-            db = Some(PathBuf::from(value));
-        } else {
-            return Err(UsageError::new(arg_str));
+        let mut value = || args.next().ok_or_else(|| UsageError::new(arg_str.clone()));
+        match arg_str.as_str() {
+            "--db" => db = Some(PathBuf::from(value()?)),
+            "--after" => after = Some(value()?.to_string_lossy().into_owned()),
+            "--before" => before = Some(value()?.to_string_lossy().into_owned()),
+            _ => return Err(UsageError::new(arg_str.clone())),
         }
     }
     let db = db.unwrap_or_else(|| PathBuf::from(DEFAULT_DB));
-    Ok(Command::Fetch { db })
+    Ok(Command::Fetch { db, after, before })
 }

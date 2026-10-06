@@ -99,6 +99,12 @@ pub enum Error {
         /// What was wrong with it.
         reason: String,
     },
+    /// A `--after` / `--before` day was malformed, or the range was empty or inverted.
+    #[error("invalid date range: {reason}")]
+    InvalidRange {
+        /// What was wrong with it.
+        reason: String,
+    },
     /// Ingesting message `id` failed for a reason that aborts the run.
     #[error("ingest of message {} failed: {source}", id.as_str())]
     Ingest {
@@ -383,6 +389,43 @@ fn decode_base64url(text: &str) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
+/// An optional UTC-day window: `after` inclusive, `before` exclusive. Invariant: when both
+/// bounds are present, `after < before`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DateRange {
+    after: Option<time::Date>,
+    before: Option<time::Date>,
+}
+
+impl DateRange {
+    /// Parses strict `YYYY-MM-DD` bounds.
+    ///
+    /// # Errors
+    /// `Error::InvalidRange` for a malformed day, or when `after >= before`.
+    pub fn parse(after: Option<&str>, before: Option<&str>) -> Result<Self, Error> {
+        let day = |flag: &str, value: Option<&str>| -> Result<Option<time::Date>, Error> {
+            value
+                .map(|v| {
+                    time::Date::parse(v, time::macros::format_description!("[year]-[month]-[day]"))
+                        .map_err(|_| Error::InvalidRange {
+                            reason: format!("{flag} `{v}` is not a YYYY-MM-DD day"),
+                        })
+                })
+                .transpose()
+        };
+        let after = day("--after", after)?;
+        let before = day("--before", before)?;
+        if let (Some(a), Some(b)) = (after, before)
+            && a >= b
+        {
+            return Err(Error::InvalidRange {
+                reason: format!("--after {a} is not before --before {b}"),
+            });
+        }
+        Ok(Self { after, before })
+    }
+}
+
 /// The Gmail configuration read from the environment. `Debug` redacts secrets.
 #[derive(Clone)]
 pub struct Config {
@@ -433,10 +476,20 @@ impl Config {
         }))
     }
 
-    /// The Gmail search query selecting the configured label, `label:<label>` verbatim.
+    /// The Gmail search query selecting the configured label, `label:<label>` verbatim,
+    /// followed by ` after:<epoch>` / ` before:<epoch>` (UTC midnight, unix seconds) for the
+    /// bounds `range` carries.
     #[must_use]
-    pub fn query(&self) -> String {
-        format!("label:{}", self.label)
+    pub fn query(&self, range: &DateRange) -> String {
+        let epoch = |d: time::Date| d.midnight().assume_utc().unix_timestamp();
+        let mut query = format!("label:{}", self.label);
+        if let Some(d) = range.after {
+            query.push_str(&format!(" after:{}", epoch(d)));
+        }
+        if let Some(d) = range.before {
+            query.push_str(&format!(" before:{}", epoch(d)));
+        }
+        query
     }
 
     /// A [`GmailSource`] for these credentials and endpoints.

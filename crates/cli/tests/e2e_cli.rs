@@ -550,3 +550,63 @@ async fn ac8_fetch_config_and_auth_failures_exit_1() -> common::Result<()> {
     assert!(!stderr.contains("REFRESH-VALUE"), "{stderr}");
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ac10_fetch_bounds_query_by_date_range_or_exits_2() -> common::Result<()> {
+    use std::sync::{Arc, Mutex};
+
+    use axum::Router;
+    use axum::extract::Query;
+    use axum::routing::{get, post};
+
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let recorder = Arc::clone(&seen);
+    let app = Router::new()
+        .route("/token", post(|| async { TOKEN_OK.1 }))
+        .route(
+            "/gmail/v1/users/me/messages",
+            get(
+                move |Query(params): Query<std::collections::HashMap<String, String>>| async move {
+                    if let (Ok(mut queries), Some(q)) = (recorder.lock(), params.get("q")) {
+                        queries.push(q.clone());
+                    }
+                    "{}"
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let dir = common::tmp_dir();
+    let output = fetch_command(&dir, &base)?
+        .args(["fetch", "--before", "2026-10-01", "--after", "2026-09-01"])
+        .arg("--db")
+        .arg(dir.join("ok.db"))
+        .output()?;
+    assert_eq!(output.status.code(), Some(0));
+    let queries = seen.lock().map_err(|e| e.to_string())?.clone();
+    assert_eq!(
+        queries,
+        vec!["label:bills after:1788220800 before:1790812800".to_owned()]
+    );
+
+    for (after, before) in [
+        ("2026-9-01", "2026-10-01"),
+        ("2026-10-01", "2026-10-01"),
+        ("2026-10-02", "2026-10-01"),
+    ] {
+        let db = dir.join("bad.db");
+        let bad = fetch_command(&dir, &base)?
+            .args(["fetch", "--after", after, "--before", before])
+            .arg("--db")
+            .arg(&db)
+            .output()?;
+        assert_eq!(bad.status.code(), Some(2), "{after} {before}");
+        assert!(!String::from_utf8(bad.stderr)?.is_empty());
+        assert!(!db.exists());
+    }
+    Ok(())
+}

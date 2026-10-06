@@ -8,7 +8,9 @@ use axum::Router;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
-use hauz_core::mail::{Config, Credentials, Error, GmailSource, MailSource, MessageId, PageToken};
+use hauz_core::mail::{
+    Config, Credentials, DateRange, Error, GmailSource, MailSource, MessageId, PageToken,
+};
 
 type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -311,7 +313,7 @@ fn ac4_config_absent_missing_and_redacted() -> Result<()> {
     }
 
     let config = Config::from_env(env(&FULL))?.ok_or("configured")?;
-    assert_eq!(config.query(), "label:bills");
+    assert_eq!(config.query(&DateRange::parse(None, None)?), "label:bills");
     let rendered = [
         format!("{config:?}"),
         format!("{:?}", creds()),
@@ -331,6 +333,43 @@ fn ac4_config_absent_missing_and_redacted() -> Result<()> {
     for text in rendered {
         assert!(!text.contains("SECRET-VALUE"), "{text}");
         assert!(!text.contains("REFRESH-VALUE"), "{text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ac9_date_range_bounds_the_query_and_rejects_bad_input() -> Result<()> {
+    let config = Config::from_env(env(&FULL))?.ok_or("configured")?;
+    let query =
+        |after, before| -> Result<String> { Ok(config.query(&DateRange::parse(after, before)?)) };
+    assert_eq!(query(None, None)?, "label:bills");
+    assert_eq!(
+        query(Some("2026-09-01"), None)?,
+        "label:bills after:1788220800"
+    );
+    assert_eq!(
+        query(None, Some("2026-10-01"))?,
+        "label:bills before:1790812800"
+    );
+    assert_eq!(
+        query(Some("2026-09-01"), Some("2026-10-01"))?,
+        "label:bills after:1788220800 before:1790812800"
+    );
+    for (after, before) in [
+        (Some("2026/09/01"), None),
+        (Some("2026-9-1"), None),
+        (None, Some("not-a-day")),
+        (Some("2026-02-30"), None),
+        (Some("2026-10-01"), Some("2026-10-01")),
+        (Some("2026-10-02"), Some("2026-10-01")),
+    ] {
+        assert!(
+            matches!(
+                DateRange::parse(after, before),
+                Err(Error::InvalidRange { .. })
+            ),
+            "{after:?} {before:?}"
+        );
     }
     Ok(())
 }
