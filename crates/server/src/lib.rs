@@ -1,13 +1,16 @@
 //! The axum shell: raw bytes in, `hauz-core` calls out, status codes back. `POST
 //! /v1/ingest/email` runs [`hauz_core::ingest::ingest`] over the raw RFC 5322 body;
 //! `GET /v1/bills/{id}` reads a stored [`hauz_core::bill::Bill`] back as JSON. No
-//! `Content-Type` enforcement, no auth, no logging: those are deliberately out of scope here.
+//! `Content-Type` enforcement, no logging: those are deliberately out of scope here.
 
 use std::sync::Arc;
 
 use axum::body::Bytes;
+use axum::extract::Request;
 use axum::extract::{DefaultBodyLimit, Path, State};
-use axum::http::StatusCode;
+use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use axum::http::{HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -21,20 +24,60 @@ use serde::Serialize;
 /// with 413 before `ingest` ever sees it.
 pub const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
 
-/// The server's shared state: the store and extractor every request is handled against.
-/// Cheap to clone (both fields are `Arc`), as axum requires for per-request state.
+/// The shared secret every `/v1` request must present as `Authorization: Bearer <token>`.
+/// Never blank, never printed: `Debug` is redacted and there is no accessor.
+#[derive(Clone)]
+pub struct ApiToken(Arc<str>);
+
+impl ApiToken {
+    /// `None` when `token` is empty or only whitespace (a blank token would leave the
+    /// server silently open).
+    #[must_use]
+    pub fn new(token: impl Into<String>) -> Option<Self> {
+        let token = token.into();
+        if token.trim().is_empty() {
+            None
+        } else {
+            Some(Self(Arc::from(token)))
+        }
+    }
+
+    fn matches(&self, presented: &str) -> bool {
+        constant_time_eq(self.0.as_bytes(), presented.as_bytes())
+    }
+}
+
+impl std::fmt::Debug for ApiToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApiToken(<redacted>)")
+    }
+}
+
+/// Byte equality that XOR-folds every byte when the lengths match; only the length leaks.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// The server's shared state: the store, extractor and API token every request is handled
+/// against. Cheap to clone (all fields are `Arc`), as axum requires for per-request state.
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<dyn BillStore>,
     extractor: Arc<dyn Extractor>,
+    token: ApiToken,
 }
 
 impl AppState {
     /// Builds the server's state from an injected store and extractor: both are system edges
-    /// (storage, extraction), so tests supply fakes behind the same traits.
+    /// (storage, extraction), so tests supply fakes behind the same traits. The token is
+    /// required: no unauthenticated state can be built.
     #[must_use]
-    pub fn new(store: Arc<dyn BillStore>, extractor: Arc<dyn Extractor>) -> Self {
-        Self { store, extractor }
+    pub fn new(store: Arc<dyn BillStore>, extractor: Arc<dyn Extractor>, token: ApiToken) -> Self {
+        Self {
+            store,
+            extractor,
+            token,
+        }
     }
 }
 
@@ -107,12 +150,45 @@ async fn get_bill(State(state): State<AppState>, Path(id): Path<String>) -> Resp
     }
 }
 
+/// The credential in a single `Authorization: Bearer <token>` header, or `None` for any
+/// other shape (absent, repeated, non-UTF-8, another scheme, no token).
+fn bearer_credential(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(AUTHORIZATION).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let value = value.to_str().ok()?;
+    let (scheme, credential) = value.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("Bearer").then_some(credential)
+}
+
+/// Rejects any request without the configured bearer token, before the handler (and so its
+/// body extractor) runs: a fixed 401 with `WWW-Authenticate: Bearer`.
+async fn require_bearer(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if bearer_credential(request.headers())
+        .is_some_and(|credential| state.token.matches(credential))
+    {
+        return next.run(request).await;
+    }
+    let mut response = error_response(StatusCode::UNAUTHORIZED, "unauthorized");
+    response
+        .headers_mut()
+        .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
+}
+
 /// Builds the server's router: `POST /v1/ingest/email`, `GET /v1/bills/{id}`, both against
-/// `state`, with the body of the former capped at [`MAX_BODY_BYTES`] (oversized ⇒ 413).
+/// `state`, each behind bearer-token auth (missing or wrong ⇒ 401), with the body of the
+/// former capped at [`MAX_BODY_BYTES`] (oversized ⇒ 413).
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/ingest/email", post(post_ingest_email))
         .route("/v1/bills/{id}", get(get_bill))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }
