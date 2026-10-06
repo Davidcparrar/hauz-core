@@ -37,6 +37,16 @@ async fn ac6_bare_needs_review_bill_round_trips() -> Result<()> {
 }
 
 #[tokio::test]
+async fn ac1_replace_overwrites_and_keeps_position() -> Result<()> {
+    common::ac1_replace_overwrites_and_keeps_position(&InMemoryStore::new()).await
+}
+
+#[tokio::test]
+async fn ac2_replace_unknown_id_is_not_found() -> Result<()> {
+    common::ac2_replace_unknown_id_is_not_found(&InMemoryStore::new()).await
+}
+
+#[tokio::test]
 async fn ac1_read_only_missing_path_errors_without_creating() {
     let db = TmpDbFile::new("ro-ac1");
     let result = SqliteStore::open_read_only(&db.path).await;

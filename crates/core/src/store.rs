@@ -49,6 +49,9 @@ pub enum Error {
         /// Human-readable reason the row's columns did not reconstruct a valid `Bill`.
         reason: String,
     },
+    /// `replace` found no row stored under this id.
+    #[error("no stored bill with id {0:?}")]
+    NotFound(BillId),
     /// The underlying storage backend failed.
     #[error("storage backend error: {0}")]
     Backend(#[from] sqlx::Error),
@@ -93,6 +96,11 @@ pub trait BillStore: Send + Sync {
 
     /// Lists every stored bill in insertion order, oldest first.
     fn list<'a>(&'a self) -> BoxFuture<'a, Result<Vec<Bill>, Error>>;
+
+    /// Overwrites vendor, amount, period, issued, due and status of the row stored under
+    /// `bill.id()`; never touches the row's id, hash, insertion time or list position.
+    /// No such row yields `Error::NotFound(id)` and writes nothing.
+    fn replace<'a>(&'a self, bill: &'a Bill) -> BoxFuture<'a, Result<(), Error>>;
 }
 
 /// Parses a row's `id` column, which the store always writes as an already-validated
@@ -190,6 +198,35 @@ fn row_to_bill(row: &SqliteRow) -> Result<Bill, Error> {
     Bill::try_from(draft).map_err(|source| to_corrupt(source.to_string()))
 }
 
+/// The columns of `bill` that `insert` and `replace` write, in the order
+/// `(currency, amount_minor, period_start, period_end, status)`.
+fn encode_columns(
+    bill: &Bill,
+) -> (
+    Option<String>,
+    Option<i64>,
+    Option<time::Date>,
+    Option<time::Date>,
+    &'static str,
+) {
+    let (currency, amount_minor) = match bill.amount() {
+        Some(money) => (
+            Some(money.currency().as_str().to_owned()),
+            Some(money.minor_units()),
+        ),
+        None => (None, None),
+    };
+    let (period_start, period_end) = match bill.period() {
+        Some(period) => (Some(period.start()), Some(period.end())),
+        None => (None, None),
+    };
+    let status = match bill.status() {
+        Status::Extracted => "extracted",
+        Status::NeedsReview => "needs_review",
+    };
+    (currency, amount_minor, period_start, period_end, status)
+}
+
 /// How long a pooled connection waits for the SQLite write lock before giving up.
 const WRITE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -267,21 +304,7 @@ impl BillStore for SqliteStore {
                 return Err(Error::DuplicateId(bill.id().clone()));
             }
 
-            let (currency, amount_minor) = match bill.amount() {
-                Some(money) => (
-                    Some(money.currency().as_str().to_owned()),
-                    Some(money.minor_units()),
-                ),
-                None => (None, None),
-            };
-            let (period_start, period_end) = match bill.period() {
-                Some(period) => (Some(period.start()), Some(period.end())),
-                None => (None, None),
-            };
-            let status = match bill.status() {
-                Status::Extracted => "extracted",
-                Status::NeedsReview => "needs_review",
-            };
+            let (currency, amount_minor, period_start, period_end, status) = encode_columns(bill);
 
             sqlx::query(
                 "INSERT INTO bills \
@@ -345,6 +368,31 @@ impl BillStore for SqliteStore {
             rows.iter().map(row_to_bill).collect()
         })
     }
+
+    fn replace<'a>(&'a self, bill: &'a Bill) -> BoxFuture<'a, Result<(), Error>> {
+        Box::pin(async move {
+            let (currency, amount_minor, period_start, period_end, status) = encode_columns(bill);
+            let result = sqlx::query(
+                "UPDATE bills SET vendor = ?, amount_minor = ?, currency = ?, period_start = ?, \
+                 period_end = ?, issued = ?, due = ?, status = ? WHERE id = ?",
+            )
+            .bind(bill.vendor().map(Vendor::name))
+            .bind(amount_minor)
+            .bind(currency)
+            .bind(period_start)
+            .bind(period_end)
+            .bind(bill.issued())
+            .bind(bill.due())
+            .bind(status)
+            .bind(bill.id().as_str())
+            .execute(&self.pool)
+            .await?;
+            if result.rows_affected() == 0 {
+                return Err(Error::NotFound(bill.id().clone()));
+            }
+            Ok(())
+        })
+    }
 }
 
 /// An in-memory [`BillStore`], the fake other modules use at this system edge. Same
@@ -403,6 +451,19 @@ impl BillStore for InMemoryStore {
         Box::pin(async move {
             let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
             Ok(rows.iter().map(|(_, b)| b.clone()).collect())
+        })
+    }
+
+    fn replace<'a>(&'a self, bill: &'a Bill) -> BoxFuture<'a, Result<(), Error>> {
+        Box::pin(async move {
+            let mut rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
+            match rows.iter_mut().find(|(_, b)| b.id() == bill.id()) {
+                Some((_, slot)) => {
+                    *slot = bill.clone();
+                    Ok(())
+                }
+                None => Err(Error::NotFound(bill.id().clone())),
+            }
         })
     }
 }

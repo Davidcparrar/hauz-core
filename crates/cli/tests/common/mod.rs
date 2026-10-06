@@ -51,3 +51,23 @@ pub(crate) fn hash_hex(raw: &[u8]) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
+
+/// Stores a bare `NeedsReview` bill (id = hash hex, every optional field `None`) in the db at
+/// `db` under `raw`'s hash: the row an older, weaker extractor would have left.
+pub(crate) async fn seed_bare_bill(db: &Path, raw: &[u8]) -> Result<()> {
+    use hauz_core::bill::{Bill, BillDraft, BillId, Status};
+    let draft = BillDraft {
+        id: BillId::new(&hash_hex(raw))?,
+        vendor: None,
+        amount: None,
+        period: None,
+        issued: None,
+        due: None,
+        status: Status::NeedsReview,
+    };
+    let store = SqliteStore::open(db).await?;
+    store
+        .insert(&hauz_core::ingest::raw_hash(raw), &Bill::try_from(draft)?)
+        .await?;
+    Ok(())
+}

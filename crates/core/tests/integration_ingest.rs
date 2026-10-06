@@ -5,13 +5,15 @@
 mod common;
 
 use common::{Result, TmpDbFile};
-use hauz_core::bill::{BillingPeriod, Currency, Money, Status, Vendor};
+use hauz_core::bill::{BillId, BillingPeriod, Currency, Money, Status, Vendor};
 use hauz_core::email::Envelope;
 use hauz_core::extract::{
     Chain, Confidence, Error as ExtractError, Escalate, Extraction, Extractor, Field,
     PdfTextExtractor, Source, Span, TextExtractor, XmlInvoiceExtractor,
 };
-use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Error, Outcome, ingest, raw_hash};
+use hauz_core::ingest::{
+    EXTRACTED_MIN_CONFIDENCE, Error, Outcome, Reextracted, ingest, raw_hash, reextract,
+};
 use hauz_core::llm::{
     Error as LlmError, LlmClient, LlmExtractor, LlmOptions, LlmRequest, Rasterizer,
 };
@@ -448,5 +450,136 @@ async fn ac8_display_name_becomes_stored_vendor() -> Result<()> {
     let bill = store.get(&id).await?.ok_or("missing bill")?;
     assert_eq!(bill.vendor(), Some(&Vendor::new("Acme Billing")?));
     assert_eq!(bill.issued(), Some(date!(2026 - 10 - 01)));
+    Ok(())
+}
+
+/// Stores `bill` under `raw`'s hash, the state a pre-improvement `ingest` would have left.
+async fn seed(store: &SqliteStore, raw: &[u8], bill: &hauz_core::bill::Bill) -> Result<()> {
+    store.insert(&raw_hash(raw), bill).await?;
+    Ok(())
+}
+
+fn dian_chain() -> Chain {
+    Chain::new(vec![
+        Box::new(XmlInvoiceExtractor),
+        Box::new(TextExtractor),
+        Box::new(PdfTextExtractor),
+    ])
+}
+
+/// The id `ingest` gives `raw`: the lowercase hex of its hash.
+fn id_of(raw: &[u8]) -> String {
+    to_hex(raw_hash(raw).as_bytes())
+}
+
+/// AC4 (#54): a stored bare `NeedsReview` bill is updated to `Extracted` by an improved chain.
+#[tokio::test]
+async fn ac4_reextract_upgrades_bare_bill_to_extracted() -> Result<()> {
+    let db = TmpDbFile::new("reextract-ac4");
+    let store = SqliteStore::open(&db.path).await?;
+    let id = id_of(DIAN_FULL_EML);
+    seed(&store, DIAN_FULL_EML, &common::bare_needs_review_bill(&id)?).await?;
+
+    let outcome = reextract(DIAN_FULL_EML, &dian_chain(), &store).await?;
+    let Reextracted::Updated(updated) = outcome else {
+        return Err(format!("expected Updated, got {outcome:?}").into());
+    };
+    assert_eq!(updated.as_str(), id);
+    let bill = store.get(&updated).await?.ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(18_435_000, Currency::new("COP")?))
+    );
+    Ok(())
+}
+
+/// AC5 (#54): a downgrade replaces exactly; no field of the old complete bill survives.
+#[tokio::test]
+async fn ac5_reextract_downgrade_replaces_exactly() -> Result<()> {
+    let raw = common::bill_eml();
+    let id = id_of(&raw);
+    let expected_db = TmpDbFile::new("reextract-ac5-expected");
+    let expected_store = SqliteStore::open(&expected_db.path).await?;
+    ingest(&raw, &TextExtractor, &expected_store).await?;
+    let expected = expected_store
+        .get(&BillId::new(&id)?)
+        .await?
+        .ok_or("missing")?;
+
+    let db = TmpDbFile::new("reextract-ac5");
+    let store = SqliteStore::open(&db.path).await?;
+    seed(&store, &raw, &common::extracted_bill(&id)?).await?;
+
+    let outcome = reextract(&raw, &TextExtractor, &store).await?;
+    assert_eq!(outcome, Reextracted::Updated(BillId::new(&id)?));
+    let stored = store.get(&BillId::new(&id)?).await?.ok_or("missing")?;
+    assert_eq!(stored.status(), Status::NeedsReview);
+    assert_eq!(stored, expected);
+    Ok(())
+}
+
+/// AC6 (#54): re-extracting with the extractor that stored the row is `Unchanged`.
+#[tokio::test]
+async fn ac6_reextract_same_extractor_is_unchanged() -> Result<()> {
+    let db = TmpDbFile::new("reextract-ac6");
+    let store = SqliteStore::open(&db.path).await?;
+    let raw = common::bill_eml();
+    let Outcome::Created(id) = ingest(&raw, &TextExtractor, &store).await? else {
+        return Err("expected Created".into());
+    };
+    let before = store.get(&id).await?;
+
+    let outcome = reextract(&raw, &TextExtractor, &store).await?;
+    assert_eq!(outcome, Reextracted::Unchanged(id.clone()));
+    assert_eq!(store.get(&id).await?, before);
+    Ok(())
+}
+
+/// AC7 (#54): an unstored message is `Created` and stored as `ingest` would.
+#[tokio::test]
+async fn ac7_reextract_unstored_message_is_created() -> Result<()> {
+    let raw = common::bill_eml();
+    let ingest_db = TmpDbFile::new("reextract-ac7-ingest");
+    let ingest_store = SqliteStore::open(&ingest_db.path).await?;
+    ingest(&raw, &TextExtractor, &ingest_store).await?;
+
+    let db = TmpDbFile::new("reextract-ac7");
+    let store = SqliteStore::open(&db.path).await?;
+    let outcome = reextract(&raw, &TextExtractor, &store).await?;
+    assert_eq!(outcome, Reextracted::Created(BillId::new(&id_of(&raw))?));
+    assert_eq!(store.list().await?, ingest_store.list().await?);
+    Ok(())
+}
+
+/// An extractor that always fails.
+struct Failing;
+
+impl Extractor for Failing {
+    fn extract<'a>(
+        &'a self,
+        _envelope: &'a Envelope,
+    ) -> hauz_core::BoxFuture<'a, std::result::Result<Extraction, ExtractError>> {
+        Box::pin(async { Err(ExtractError::InvalidConfidence(101)) })
+    }
+}
+
+/// AC8 (#54): parse and extract failures leave the stored bill untouched.
+#[tokio::test]
+async fn ac8_reextract_failures_leave_stored_bill_unchanged() -> Result<()> {
+    let db = TmpDbFile::new("reextract-ac8");
+    let store = SqliteStore::open(&db.path).await?;
+    let malformed_bill = common::extracted_bill(&id_of(MALFORMED))?;
+    seed(&store, MALFORMED, &malformed_bill).await?;
+    let raw = common::bill_eml();
+    let plain_bill = common::extracted_bill(&id_of(&raw))?;
+    seed(&store, &raw, &plain_bill).await?;
+
+    let parse = reextract(MALFORMED, &TextExtractor, &store).await;
+    assert!(matches!(parse, Err(Error::Email(_))));
+    let extract = reextract(&raw, &Failing, &store).await;
+    assert!(matches!(extract, Err(Error::Extract(_))));
+
+    assert_eq!(store.list().await?, vec![malformed_bill, plain_bill]);
     Ok(())
 }

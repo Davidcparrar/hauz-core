@@ -1,8 +1,9 @@
-//! `hauz ingest <file.eml> [--db <sqlite path>]`: local dev/replay entry point. Reads one raw
+//! `hauz ingest [--reextract] <file.eml> [--db <sqlite path>]`: local dev/replay entry point. Reads one raw
 //! message from disk and runs the same pipeline as `crates/server`
 //! (`Chain([XmlInvoiceExtractor, TextExtractor, PdfTextExtractor])`, escalating to an
 //! `LlmExtractor` when `HAUZ_LLM_PROVIDER` is set, over a `SqliteStore`), printing the
-//! outcome and bill id on one line. Untested in isolation by design; behavior is covered
+//! outcome and bill id on one line (`--reextract` overwrites an already-stored row instead of
+//! reporting `Duplicate`). Untested in isolation by design; behavior is covered
 //! end-to-end via `tests/e2e_cli.rs` (`assert_cmd`).
 
 mod args;
@@ -15,7 +16,7 @@ use anyhow::Context;
 use hauz_core::extract::{
     Chain, Escalate, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor,
 };
-use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Outcome, ingest};
+use hauz_core::ingest::{EXTRACTED_MIN_CONFIDENCE, Outcome, Reextracted, ingest, reextract};
 use hauz_core::llm::{Config, LlmExtractor, LlmOptions, Pdftoppm, RigClient};
 use hauz_core::mail;
 use hauz_core::store::SqliteStore;
@@ -34,7 +35,11 @@ async fn main() -> anyhow::Result<()> {
             println!("{USAGE}");
             Ok(())
         }
-        Command::Ingest { path, db } => run_ingest(&path, &db).await,
+        Command::Ingest {
+            path,
+            db,
+            reextract,
+        } => run_ingest(&path, &db, reextract).await,
         Command::Fetch { db, after, before } => {
             let range = match mail::DateRange::parse(after.as_deref(), before.as_deref()) {
                 Ok(range) => range,
@@ -50,11 +55,20 @@ async fn main() -> anyhow::Result<()> {
 
 /// Reads `path`, then resolves the LLM config before opening `db`, so neither a bad path nor
 /// a bad LLM config ever creates an empty DB file.
-async fn run_ingest(path: &Path, db: &Path) -> anyhow::Result<()> {
+async fn run_ingest(path: &Path, db: &Path, reextract_row: bool) -> anyhow::Result<()> {
     let raw = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let config = Config::from_env(|key| env::var(key).ok())?;
     let extractor = build_extractor(config);
     let store = SqliteStore::open(db).await?;
+
+    if reextract_row {
+        match reextract(&raw, &*extractor, &store).await? {
+            Reextracted::Created(id) => println!("Created {}", id.as_str()),
+            Reextracted::Updated(id) => println!("Updated {}", id.as_str()),
+            Reextracted::Unchanged(id) => println!("Unchanged {}", id.as_str()),
+        }
+        return Ok(());
+    }
 
     let outcome = ingest(&raw, &*extractor, &store).await?;
     match outcome {

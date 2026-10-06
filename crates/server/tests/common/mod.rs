@@ -105,4 +105,11 @@ impl BillStore for FailingStore {
     fn list<'a>(&'a self) -> BoxFuture<'a, core::result::Result<Vec<Bill>, StoreError>> {
         Box::pin(async { Err(boom()) })
     }
+
+    fn replace<'a>(
+        &'a self,
+        _bill: &'a Bill,
+    ) -> BoxFuture<'a, core::result::Result<(), StoreError>> {
+        Box::pin(async { Err(boom()) })
+    }
 }

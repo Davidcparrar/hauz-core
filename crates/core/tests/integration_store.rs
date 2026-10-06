@@ -64,6 +64,42 @@ async fn ac7_reopen_sees_rows_from_first_handle() -> Result<()> {
     Ok(())
 }
 
+/// #54 AC3: `SqliteStore::replace` behaves as the in-memory store and leaves the `hash` and
+/// `inserted_at` columns untouched.
+#[tokio::test]
+async fn ac3_replace_behaves_like_in_memory_and_keeps_hash_and_inserted_at() -> Result<()> {
+    let db = TmpDbFile::new("replace-ac3");
+    let store = SqliteStore::open(&db.path).await?;
+    let old = common::extracted_bill("rep-a")?;
+    store.insert(&common::hash(50), &old).await?;
+
+    let mut raw = SqliteConnectOptions::new()
+        .filename(&db.path)
+        .connect()
+        .await?;
+    let columns = "SELECT hash, inserted_at FROM bills WHERE id = 'rep-a'";
+    let before = sqlx::query(columns).fetch_one(&mut raw).await?;
+    let hash_before: Vec<u8> = before.try_get("hash")?;
+    let inserted_before: OffsetDateTime = before.try_get("inserted_at")?;
+
+    let new = common::bare_needs_review_bill("rep-a")?;
+    store.replace(&new).await?;
+    let after = sqlx::query(columns).fetch_one(&mut raw).await?;
+    let hash_after: Vec<u8> = after.try_get("hash")?;
+    let inserted_after: OffsetDateTime = after.try_get("inserted_at")?;
+    assert_eq!(hash_before, hash_after);
+    assert_eq!(inserted_before, inserted_after);
+    assert_eq!(store.get(old.id()).await?, Some(new));
+
+    let same_scenario = TmpDbFile::new("replace-ac3-ac1");
+    common::ac1_replace_overwrites_and_keeps_position(
+        &SqliteStore::open(&same_scenario.path).await?,
+    )
+    .await?;
+    let unknown = TmpDbFile::new("replace-ac3-ac2");
+    common::ac2_replace_unknown_id_is_not_found(&SqliteStore::open(&unknown.path).await?).await
+}
+
 #[tokio::test]
 async fn ac8_open_with_missing_parent_directory_is_backend_error() -> Result<()> {
     let path = std::env::temp_dir().join("hauz-core-store-missing-dir-ac8/nested/file.sqlite3");
