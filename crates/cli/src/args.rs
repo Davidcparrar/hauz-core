@@ -1,11 +1,12 @@
 //! Hand-parsed grammar for `hauz`: `hauz ingest <path> [--db <path>]` (any order after
-//! `ingest`) or `hauz -h|--help`. No `clap`: the grammar is three tokens.
+//! `ingest`), `hauz fetch [--db <path>]`, or `hauz -h|--help`. No `clap`: the grammar is three tokens.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// Printed on usage errors (stderr, exit 2) and on `-h`/`--help` (stdout, exit 0).
-pub(crate) const USAGE: &str = "usage: hauz ingest <file.eml> [--db <sqlite path>]";
+pub(crate) const USAGE: &str =
+    "usage: hauz ingest <file.eml> [--db <sqlite path>]\n       hauz fetch [--db <sqlite path>]";
 
 /// `--db`'s default when the flag is absent.
 const DEFAULT_DB: &str = "hauz.db";
@@ -15,6 +16,8 @@ const DEFAULT_DB: &str = "hauz.db";
 pub(crate) enum Command {
     /// `hauz ingest <path> [--db <path>]`.
     Ingest { path: PathBuf, db: PathBuf },
+    /// `hauz fetch [--db <path>]`.
+    Fetch { db: PathBuf },
     /// `hauz -h` or `hauz --help`.
     Help,
 }
@@ -43,6 +46,7 @@ pub(crate) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command,
     match first.as_str() {
         "-h" | "--help" => Ok(Command::Help),
         "ingest" => parse_ingest(args),
+        "fetch" => parse_fetch(args),
         other => Err(UsageError::new(other.to_owned())),
     }
 }
@@ -71,4 +75,20 @@ fn parse_ingest(args: impl Iterator<Item = OsString>) -> Result<Command, UsageEr
     let path = path.ok_or_else(|| UsageError::new(String::new()))?;
     let db = db.unwrap_or_else(|| PathBuf::from(DEFAULT_DB));
     Ok(Command::Ingest { path, db })
+}
+
+/// Parses the tokens after `fetch`: only an optional `--db <path>`.
+fn parse_fetch(mut args: impl Iterator<Item = OsString>) -> Result<Command, UsageError> {
+    let mut db: Option<PathBuf> = None;
+    while let Some(arg) = args.next() {
+        let arg_str = arg.to_string_lossy().into_owned();
+        if arg_str == "--db" {
+            let value = args.next().ok_or_else(|| UsageError::new("--db"))?;
+            db = Some(PathBuf::from(value));
+        } else {
+            return Err(UsageError::new(arg_str));
+        }
+    }
+    let db = db.unwrap_or_else(|| PathBuf::from(DEFAULT_DB));
+    Ok(Command::Fetch { db })
 }

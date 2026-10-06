@@ -389,3 +389,164 @@ async fn ac7_bill_with_unsupported_zip_is_created() -> common::Result<()> {
     );
     Ok(())
 }
+
+/// A fake Google: `/token` answers `token`, the list serves `ids`, and `/messages/{id}`
+/// serves the matching raw message (base64url).
+async fn fake_gmail(
+    token: (u16, &'static str),
+    messages: Vec<(&'static str, Vec<u8>)>,
+) -> common::Result<String> {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use axum::Router;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::routing::{get, post};
+
+    let list = format!(
+        r#"{{"messages":[{}]}}"#,
+        messages
+            .iter()
+            .map(|(id, _)| format!(r#"{{"id":"{id}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let raws: Arc<HashMap<String, String>> = Arc::new(
+        messages
+            .iter()
+            .map(|(id, raw)| ((*id).to_owned(), base64url(raw)))
+            .collect(),
+    );
+    let app = Router::new()
+        .route(
+            "/token",
+            post(move || async move {
+                (
+                    StatusCode::from_u16(token.0).unwrap_or(StatusCode::BAD_GATEWAY),
+                    token.1,
+                )
+            }),
+        )
+        .route(
+            "/gmail/v1/users/me/messages",
+            get(move || async move { list }),
+        )
+        .route(
+            "/gmail/v1/users/me/messages/{id}",
+            get(
+                |State(raws): State<Arc<HashMap<String, String>>>, Path(id): Path<String>| async move {
+                    let raw = raws.get(&id).cloned().unwrap_or_default();
+                    format!(r#"{{"raw":"{raw}"}}"#)
+                },
+            ),
+        )
+        .with_state(raws);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(base)
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..=chunk.len() {
+            let index = ((n >> (18 - 6 * i)) & 0x3f) as usize;
+            out.extend(ALPHABET.get(index).copied().map(char::from));
+        }
+    }
+    out
+}
+
+fn fetch_command(dir: &std::path::Path, base: &str) -> common::Result<Command> {
+    let mut command = Command::cargo_bin("hauz")?;
+    command
+        .current_dir(dir)
+        .env_remove("HAUZ_LLM_PROVIDER")
+        .env("HAUZ_GMAIL_CLIENT_ID", "cid")
+        .env("HAUZ_GMAIL_CLIENT_SECRET", "sec")
+        .env("HAUZ_GMAIL_REFRESH_TOKEN", "REFRESH-VALUE")
+        .env("HAUZ_GMAIL_LABEL", "bills")
+        .env("HAUZ_GMAIL_TOKEN_URL", format!("{base}/token"))
+        .env("HAUZ_GMAIL_API_BASE", base);
+    Ok(command)
+}
+
+const TOKEN_OK: (u16, &str) = (200, r#"{"access_token":"at","expires_in":3600}"#);
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ac7_fetch_creates_then_duplicates() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let db = dir.join("f.db");
+    let first = std::fs::read(common::fixture("bill.eml"))?;
+    let second = String::from_utf8(first.clone())?
+        .replace("Your bill", "Your other bill")
+        .into_bytes();
+    let base = fake_gmail(
+        TOKEN_OK,
+        vec![("m1", first.clone()), ("m2", second.clone())],
+    )
+    .await?;
+    let expected = format!(
+        "{}{}",
+        format_args!("Created {}\n", common::hash_hex(&first)),
+        format_args!("Created {}\n", common::hash_hex(&second)),
+    );
+
+    let output = fetch_command(&dir, &base)?
+        .arg("fetch")
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8(output.stdout)?, expected);
+
+    let rerun = fetch_command(&dir, &base)?
+        .arg("fetch")
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(rerun.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(rerun.stdout)?,
+        expected.replace("Created", "Duplicate")
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ac8_fetch_config_and_auth_failures_exit_1() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let db = dir.join("missing.db");
+    let base = fake_gmail(TOKEN_OK, vec![]).await?;
+
+    let output = fetch_command(&dir, &base)?
+        .env_remove("HAUZ_GMAIL_REFRESH_TOKEN")
+        .arg("fetch")
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8(output.stderr)?.contains("HAUZ_GMAIL_REFRESH_TOKEN"));
+    assert!(!db.exists());
+
+    let rejecting = fake_gmail((400, r#"{"error":"invalid_grant"}"#), vec![]).await?;
+    let auth = fetch_command(&dir, &rejecting)?
+        .arg("fetch")
+        .arg("--db")
+        .arg(dir.join("auth.db"))
+        .output()?;
+    assert_eq!(auth.status.code(), Some(1));
+    let stderr = String::from_utf8(auth.stderr)?;
+    assert!(stderr.contains("auth"), "{stderr}");
+    assert!(!stderr.contains("REFRESH-VALUE"), "{stderr}");
+    Ok(())
+}

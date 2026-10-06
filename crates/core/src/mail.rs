@@ -191,17 +191,26 @@ impl GmailSource {
     /// A source talking to Google's production endpoints.
     #[must_use]
     pub fn new(creds: Credentials) -> Self {
-        Self::with_endpoints(creds, DEFAULT_TOKEN_URL.to_owned(), DEFAULT_API_BASE.to_owned())
+        Self::with_endpoints(
+            creds,
+            DEFAULT_TOKEN_URL.to_owned(),
+            DEFAULT_API_BASE.to_owned(),
+        )
     }
 
     /// A source talking to the given token endpoint and API base (a fake in tests).
     #[must_use]
     pub fn with_endpoints(creds: Credentials, token_url: String, api_base: String) -> Self {
+        let api_base = if api_base.ends_with('/') {
+            api_base.trim_end_matches('/').to_owned()
+        } else {
+            api_base
+        };
         Self {
             http: reqwest::Client::new(),
             creds,
             token_url,
-            api_base: api_base.trim_end_matches('/').to_owned(),
+            api_base,
             token: Mutex::new(None),
         }
     }

@@ -25,6 +25,12 @@ struct Fake {
 
 type Shared = Arc<Mutex<Fake>>;
 
+fn lock(shared: &Shared) -> std::sync::MutexGuard<'_, Fake> {
+    shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn ok_token() -> (u16, String) {
     (
         200,
@@ -54,7 +60,7 @@ async fn serve(fake: Fake) -> Result<(Shared, String)> {
             "/token",
             post(
                 |State(s): State<Shared>, Form(form): Form<HashMap<String, String>>| async move {
-                    let mut s = s.lock().unwrap();
+                    let mut s = lock(&s);
                     s.token_forms.push(form);
                     reply(s.token.clone())
                 },
@@ -66,7 +72,7 @@ async fn serve(fake: Fake) -> Result<(Shared, String)> {
                 |State(s): State<Shared>,
                  headers: HeaderMap,
                  Query(q): Query<HashMap<String, String>>| async move {
-                    let mut s = s.lock().unwrap();
+                    let mut s = lock(&s);
                     s.list_calls.push((bearer(&headers), q));
                     reply(s.list.clone())
                 },
@@ -79,7 +85,7 @@ async fn serve(fake: Fake) -> Result<(Shared, String)> {
                  Path(id): Path<String>,
                  headers: HeaderMap,
                  Query(q): Query<HashMap<String, String>>| async move {
-                    let mut s = s.lock().unwrap();
+                    let mut s = lock(&s);
                     s.get_calls.push((id, bearer(&headers), q));
                     reply(s.get.clone())
                 },
@@ -120,27 +126,29 @@ async fn ac1_lists_ids_with_token_form_and_bearer() -> Result<()> {
     .await?;
     let src = source(&base);
 
-    let page = src.list("label:bills", Some(&PageToken::new("PREV"))).await?;
+    let page = src
+        .list("label:bills", Some(&PageToken::new("PREV")))
+        .await?;
 
     assert_eq!(
         page.ids.iter().map(MessageId::as_str).collect::<Vec<_>>(),
         ["a1", "b2"]
     );
     assert_eq!(page.next.as_ref().map(PageToken::as_str), Some("NEXT"));
-    let s = shared.lock().unwrap();
-    let form = &s.token_forms[0];
-    assert_eq!(form["client_id"], "cid");
-    assert_eq!(form["client_secret"], "SECRET-VALUE");
-    assert_eq!(form["refresh_token"], "REFRESH-VALUE");
-    assert_eq!(form["grant_type"], "refresh_token");
-    let (auth, q) = &s.list_calls[0];
-    assert_eq!(auth.as_deref(), Some("Bearer at-1"));
-    assert_eq!(q["q"], "label:bills");
-    assert_eq!(q["maxResults"], "500");
-    assert_eq!(q["pageToken"], "PREV");
-    drop(s);
+    {
+        let s = shared.lock().unwrap();
+        let form = &s.token_forms[0];
+        assert_eq!(form["client_id"], "cid");
+        assert_eq!(form["client_secret"], "SECRET-VALUE");
+        assert_eq!(form["refresh_token"], "REFRESH-VALUE");
+        assert_eq!(form["grant_type"], "refresh_token");
+        let (auth, q) = &s.list_calls[0];
+        assert_eq!(auth.as_deref(), Some("Bearer at-1"));
+        assert_eq!(q["q"], "label:bills");
+        assert_eq!(q["maxResults"], "500");
+        assert_eq!(q["pageToken"], "PREV");
+    }
     empty_listing_has_no_ids_and_no_next().await
-
 }
 
 async fn empty_listing_has_no_ids_and_no_next() -> Result<()> {
@@ -155,7 +163,9 @@ async fn empty_listing_has_no_ids_and_no_next() -> Result<()> {
 
     assert!(page.ids.is_empty());
     assert!(page.next.is_none());
-    assert!(!shared.lock().unwrap().list_calls[0].1.contains_key("pageToken"));
+    let s = lock(&shared);
+    let (_, q) = s.list_calls.first().ok_or("one list call")?;
+    assert!(!q.contains_key("pageToken"));
     Ok(())
 }
 
@@ -238,7 +248,10 @@ async fn ac3_maps_auth_transport_and_malformed() -> Result<()> {
         ..Fake::default()
     })
     .await?;
-    assert!(matches!(token_500, Error::Transport { .. }), "{token_500:?}");
+    assert!(
+        matches!(token_500, Error::Transport { .. }),
+        "{token_500:?}"
+    );
 
     let bad_json = list_error(Fake {
         token: ok_token(),
@@ -255,7 +268,10 @@ async fn ac3_maps_auth_transport_and_malformed() -> Result<()> {
     })
     .await?;
     let bad_b64 = source(&base).fetch_raw(&MessageId::new("a1")?).await;
-    assert!(matches!(bad_b64, Err(Error::Malformed { .. })), "{bad_b64:?}");
+    assert!(
+        matches!(bad_b64, Err(Error::Malformed { .. })),
+        "{bad_b64:?}"
+    );
     Ok(())
 }
 
@@ -283,7 +299,11 @@ fn ac4_config_absent_missing_and_redacted() -> Result<()> {
         "HAUZ_GMAIL_REFRESH_TOKEN",
         "HAUZ_GMAIL_LABEL",
     ] {
-        let pairs: Vec<_> = FULL.iter().filter(|(k, _)| *k != missing).copied().collect();
+        let pairs: Vec<_> = FULL
+            .iter()
+            .filter(|(k, _)| *k != missing)
+            .copied()
+            .collect();
         match Config::from_env(env(&pairs)) {
             Err(Error::Config { variable }) => assert_eq!(variable, missing),
             other => return Err(format!("expected Config error, got {other:?}").into()),
@@ -303,7 +323,10 @@ fn ac4_config_absent_missing_and_redacted() -> Result<()> {
                 reason: "token endpoint answered 400".to_owned()
             }
         ),
-        format!("{:?}", Config::from_env(env(&[("HAUZ_GMAIL_CLIENT_ID", "c")]))),
+        format!(
+            "{:?}",
+            Config::from_env(env(&[("HAUZ_GMAIL_CLIENT_ID", "c")]))
+        ),
     ];
     for text in rendered {
         assert!(!text.contains("SECRET-VALUE"), "{text}");
