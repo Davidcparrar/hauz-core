@@ -46,6 +46,17 @@ pub enum Outcome {
     Duplicate(BillId),
 }
 
+/// The result of [`reextract`]ing one raw message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reextracted {
+    /// The message was never stored; a new row was inserted under this id.
+    Created(BillId),
+    /// The stored row was overwritten with the new extraction.
+    Updated(BillId),
+    /// The new extraction equals the stored row; nothing was written.
+    Unchanged(BillId),
+}
+
 /// The SHA-256 hash of `raw`, `store`'s idempotency key.
 #[must_use]
 pub fn raw_hash(raw: &[u8]) -> RawHash {
@@ -78,6 +89,19 @@ pub async fn ingest(raw: &[u8], ex: &dyn Extractor, st: &dyn BillStore) -> Resul
         return Ok(Outcome::Duplicate(existing.id().clone()));
     }
 
+    let bill = build_bill(raw, &hash, ex).await?;
+
+    match st.insert(&hash, &bill).await? {
+        InsertOutcome::Inserted(id) => Ok(Outcome::Created(id)),
+        InsertOutcome::Duplicate(id) => Ok(Outcome::Duplicate(id)),
+    }
+}
+
+/// Parses `raw`, extracts with `ex`, and drafts the bill whose id is the lowercase hex of
+/// `hash`: `Extracted` when the amount field is present at confidence
+/// `>= EXTRACTED_MIN_CONFIDENCE` and vendor is present and so is a period or an issue date,
+/// else `NeedsReview` keeping every present field.
+async fn build_bill(raw: &[u8], hash: &RawHash, ex: &dyn Extractor) -> Result<Bill, Error> {
     let envelope = Envelope::parse(raw)?;
     let extraction = ex.extract(&envelope).await?;
 
@@ -97,10 +121,41 @@ pub async fn ingest(raw: &[u8], ex: &dyn Extractor, st: &dyn BillStore) -> Resul
         due: extraction.due.map(|field| field.value),
         status,
     };
-    let bill = Bill::try_from(draft)?;
+    Ok(Bill::try_from(draft)?)
+}
 
-    match st.insert(&hash, &bill).await? {
-        InsertOutcome::Inserted(id) => Ok(Outcome::Created(id)),
-        InsertOutcome::Duplicate(id) => Ok(Outcome::Duplicate(id)),
+/// Re-runs the pipeline on `raw` and overwrites the row stored for its hash.
+///
+/// In order: hashes `raw`, parses, extracts and builds the bill exactly as [`ingest`] does
+/// (every failure precedes any write). No row under the hash: inserts and returns `Created`
+/// (an `insert` `Duplicate` from a concurrent writer falls through to the stored path). A
+/// stored row equal to the new bill returns `Unchanged` without writing; otherwise the row is
+/// replaced exactly (fields becoming `None` and a downgrade to `NeedsReview` included) and
+/// `Updated` is returned.
+///
+/// # Errors
+/// As [`ingest`]: [`Error::Email`], [`Error::Extract`], [`Error::Bill`], or [`Error::Store`].
+pub async fn reextract(
+    raw: &[u8],
+    ex: &dyn Extractor,
+    st: &dyn BillStore,
+) -> Result<Reextracted, Error> {
+    let hash = raw_hash(raw);
+    let bill = build_bill(raw, &hash, ex).await?;
+
+    let stored = match st.find_by_hash(&hash).await? {
+        Some(stored) => stored,
+        None => match st.insert(&hash, &bill).await? {
+            InsertOutcome::Inserted(id) => return Ok(Reextracted::Created(id)),
+            InsertOutcome::Duplicate(_) => st
+                .find_by_hash(&hash)
+                .await?
+                .ok_or_else(|| store::Error::NotFound(bill.id().clone()))?,
+        },
+    };
+    if stored == bill {
+        return Ok(Reextracted::Unchanged(bill.id().clone()));
     }
+    st.replace(&bill).await?;
+    Ok(Reextracted::Updated(bill.id().clone()))
 }

@@ -610,3 +610,107 @@ async fn ac10_fetch_bounds_query_by_date_range_or_exits_2() -> common::Result<()
     }
     Ok(())
 }
+
+/// AC9 (#54): `--reextract` on a db holding a bare `NeedsReview` bill for `dian_full.eml`
+/// prints `Updated <id>` and stores it `Extracted`.
+#[tokio::test]
+async fn ac9_reextract_upgrades_seeded_bare_bill() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let eml = dir.join("dian_full.eml");
+    std::fs::write(&eml, DIAN_FULL_EML)?;
+    let db = dir.join("a.db");
+    let hash = common::hash_hex(DIAN_FULL_EML);
+    common::seed_bare_bill(&db, DIAN_FULL_EML).await?;
+
+    let output = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg("--reextract")
+        .arg(&eml)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        format!("Updated {hash}\n")
+    );
+    let store = SqliteStore::open(&db).await?;
+    let bill = store
+        .get(&BillId::new(&hash)?)
+        .await?
+        .ok_or("missing bill")?;
+    assert_eq!(bill.status(), Status::Extracted);
+    assert_eq!(
+        bill.amount(),
+        Some(&Money::new(18_435_000, Currency::new("COP")?))
+    );
+    Ok(())
+}
+
+/// AC10 (#54): ingest then `ingest <file> --reextract` prints `Unchanged <id>`.
+#[test]
+fn ac10_reextract_after_ingest_is_unchanged() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let bill = common::fixture("bill.eml");
+    let db = dir.join("a.db");
+    let hash = common::hash_hex(&std::fs::read(&bill)?);
+
+    let first = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg(&bill)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(first.status.code(), Some(0));
+
+    let second = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg(&bill)
+        .arg("--reextract")
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(second.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(second.stdout)?,
+        format!("Unchanged {hash}\n")
+    );
+    Ok(())
+}
+
+/// AC11 (#54): `--reextract` on a malformed message exits 1 leaving the stored bill alone;
+/// `hauz fetch --reextract` is a usage error (exit 2).
+#[tokio::test]
+async fn ac11_reextract_malformed_exits_1_and_fetch_rejects_flag() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let malformed = common::fixture("malformed.eml");
+    let raw = std::fs::read(&malformed)?;
+    let db = dir.join("a.db");
+    common::seed_bare_bill(&db, &raw).await?;
+    let before = SqliteStore::open(&db).await?.list().await?;
+
+    let output = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("ingest")
+        .arg("--reextract")
+        .arg(&malformed)
+        .arg("--db")
+        .arg(&db)
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
+    assert_eq!(SqliteStore::open(&db).await?.list().await?, before);
+
+    let fetch = Command::cargo_bin("hauz")?
+        .current_dir(&dir)
+        .arg("fetch")
+        .arg("--reextract")
+        .output()?;
+    assert_eq!(fetch.status.code(), Some(2));
+    Ok(())
+}

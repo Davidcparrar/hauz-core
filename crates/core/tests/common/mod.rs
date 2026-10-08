@@ -287,6 +287,35 @@ pub(crate) async fn ac6_bare_needs_review_bill_round_trips(store: &dyn BillStore
     Ok(())
 }
 
+/// #54 AC1: `replace` on a stored id overwrites the bill, keeps the hash key and the list
+/// position.
+pub(crate) async fn ac1_replace_overwrites_and_keeps_position(store: &dyn BillStore) -> Result<()> {
+    let old = extracted_bill("rep-a")?;
+    let other = extracted_bill("rep-b")?;
+    store.insert(&hash(50), &old).await?;
+    store.insert(&hash(51), &other).await?;
+
+    let new = bare_needs_review_bill("rep-a")?;
+    store.replace(&new).await?;
+
+    assert_eq!(store.get(new.id()).await?, Some(new.clone()));
+    assert_eq!(store.find_by_hash(&hash(50)).await?, Some(new.clone()));
+    assert_eq!(store.list().await?, vec![new, other]);
+    Ok(())
+}
+
+/// #54 AC2: `replace` on an unstored id is `NotFound` and writes nothing.
+pub(crate) async fn ac2_replace_unknown_id_is_not_found(store: &dyn BillStore) -> Result<()> {
+    let stored = extracted_bill("rep-stored")?;
+    store.insert(&hash(52), &stored).await?;
+
+    let ghost = bare_needs_review_bill("rep-ghost")?;
+    let result = store.replace(&ghost).await;
+    assert!(matches!(&result, Err(Error::NotFound(id)) if id == ghost.id()));
+    assert_eq!(store.list().await?, vec![stored]);
+    Ok(())
+}
+
 // -----------------------------------------------------------------------------------------
 // PDF fixture builders for `extract`'s `PdfTextExtractor` tests (std only, no dependency on
 // `pdf-extract` or any PDF library): a minimal PDF-1.4, single page, base-14 Helvetica `/F1`,
