@@ -17,7 +17,7 @@ is logged and retried next tick while the server keeps serving.
   before the hash short-circuit, so a whole-label poll re-downloads everything; the one-day
   overlap catches mail near UTC midnight.
 - Design call — **interval config** lives on `mail::Config` (it owns `HAUZ_GMAIL_*`).
-  `HAUZ_GMAIL_POLL_SECS` is optional (default 300) and must be an integer ≥ 1. Zero is
+  `HAUZ_GMAIL_POLL_SECS` is optional (default 1800, i.e. 30 min) and must be an integer ≥ 1. Zero is
   rejected because `tokio::time::interval` panics on a zero period. The `Error::Config`
   message becomes `missing or invalid configuration: {variable}`, matching `llm::Error::Config`.
 - Design call — **logging** is an injected `FnMut(String)` sink: `main.rs` passes `eprintln!`
@@ -50,8 +50,8 @@ is logged and retried next tick while the server keeps serving.
 
 ## Test plan
 - AC1 [unit] WHEN Gmail is configured and `HAUZ_GMAIL_POLL_SECS` is unset THE SYSTEM SHALL
-  report `poll_interval()` = 300 s, and WHEN it is `"45"` THE SYSTEM SHALL report 45 s.
-  (`unit_mail.rs`, `ac1_poll_interval_defaults_to_300_and_reads_env`)
+  report `poll_interval()` = 1800 s, and WHEN it is `"45"` THE SYSTEM SHALL report 45 s.
+  (`unit_mail.rs`, `ac1_poll_interval_defaults_to_1800_and_reads_env`)
 - AC2 [unit] WHEN Gmail is configured and `HAUZ_GMAIL_POLL_SECS` is `"0"`, `"-5"`, `"abc"` or
   `""` THE SYSTEM SHALL return `Err(Error::Config { variable: "HAUZ_GMAIL_POLL_SECS" })`.
   (`ac2_rejects_invalid_poll_secs`)
