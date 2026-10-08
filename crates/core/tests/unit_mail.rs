@@ -385,9 +385,12 @@ fn full_with(extra: (&'static str, &'static str)) -> impl Fn(&str) -> Option<Str
 }
 
 #[test]
-fn ac1_poll_interval_defaults_to_300_and_reads_env() -> Result<()> {
+fn ac1_poll_interval_defaults_to_1800_and_reads_env() -> Result<()> {
     let default = Config::from_env(env(&FULL))?.ok_or("configured")?;
-    assert_eq!(default.poll_interval(), std::time::Duration::from_secs(300));
+    assert_eq!(
+        default.poll_interval(),
+        std::time::Duration::from_secs(1800)
+    );
     let set = Config::from_env(full_with(("HAUZ_GMAIL_POLL_SECS", "45")))?.ok_or("configured")?;
     assert_eq!(set.poll_interval(), std::time::Duration::from_secs(45));
     Ok(())

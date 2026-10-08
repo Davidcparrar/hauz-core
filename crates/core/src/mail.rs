@@ -427,7 +427,7 @@ impl DateRange {
 }
 
 /// `HAUZ_GMAIL_POLL_SECS` when unset.
-const DEFAULT_POLL_SECS: u64 = 300;
+const DEFAULT_POLL_SECS: u64 = 1800;
 
 /// The Gmail configuration read from the environment. `Debug` redacts secrets.
 #[derive(Clone)]
@@ -455,7 +455,7 @@ impl Config {
     /// Reads `HAUZ_GMAIL_*` through `get`. No `HAUZ_GMAIL_CLIENT_ID` means Gmail is not
     /// configured (`Ok(None)`); otherwise `_CLIENT_SECRET`, `_REFRESH_TOKEN` and `_LABEL` are
     /// required, `_TOKEN_URL` / `_API_BASE` optionally override Google's endpoints, and
-    /// `_POLL_SECS` (an integer >= 1, default 300) sets the poll interval.
+    /// `_POLL_SECS` (an integer >= 1, default 1800) sets the poll interval.
     ///
     /// # Errors
     /// `Error::Config { variable }` naming the first missing (or empty) required variable, or
