@@ -3,11 +3,11 @@
      docs/decisions.md. -->
 
 ## Purpose
-- Turn an emailed bill (body, attachments) into a structured `Bill`.
+- Turn an emailed bill into a structured `Bill`.
 - Persist every record idempotently (same email ⇒ one bill).
 - Stay honest: unreadable ⇒ `needs_review`, never guessed.
 
-Mail arrives by webhook or Gmail fetch. No analytics or web UI.
+Mail arrives by webhook, Gmail fetch or poll.
 
 ## Crate map
 ```
@@ -72,7 +72,7 @@ Mail arrives by webhook or Gmail fetch. No analytics or web UI.
   (insert / exact `replace` / equal, no write).
 - `mail` — owns the mail-source edge: `trait MailSource { list(query, page) -> Page { ids,
   next }, fetch_raw(&MessageId) }`, `GmailSource` (REST over `reqwest`,
-  refresh token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, redacted), `query(&DateRange)` (UTC days),
+  refresh token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, redacted), `poll_interval()`, `query(&DateRange)` (UTC days), `poll_query(now)` (since yesterday UTC),
   `fetch(source, query, ex, st) -> Vec<Fetched>`: `Email`/`Extract` errors
   recorded per message, others abort; `Error { Config, Auth, Transport, Malformed, InvalidRange, Ingest }`.
 
@@ -83,19 +83,20 @@ Mail arrives by webhook or Gmail fetch. No analytics or web UI.
   Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: 200 `Bill` JSON (`BillDraft` shape), else 404. `main.rs`
   reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([Xml, Text, PdfText])`, in `Escalate` over
-  `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set. Untested by design.
+  `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set, and spawns a `Poller` when Gmail is set
+  (untested). `Poller::new(source, config, ex, st)`: `tick(now)` = `fetch(poll_query)`;
+  `spawn(interval, log)` loops; errors retry.
 - cli (`crates/cli`, bin `hauz`): `hauz ingest [--reextract] <file.eml>` / `hauz fetch [--after|--before <day>]`,
   `[--db <path>]` (default `./hauz.db`); config resolves before the DB opens. Stdout per
   message: `Created|Duplicate|Updated|Unchanged <id>` or `Failed <gmail id>: <error>`. Exit 1 runtime, 2 usage.
 - tui (`crates/tui`, lib + bin `hauz-tui [--db <path>]`): pub `load` (`open_read_only` + `list`, before the terminal opens), `App` (`r` filters `needs_review`), `draw`. Exits as cli.
 
 ## Storage
-SQLite through sqlx, one file, WAL mode; a Litestream sidecar replicates the WAL to a DigitalOcean
-Spaces bucket from one Droplet (#22).
+SQLite (sqlx, WAL); Litestream replicates to DigitalOcean Spaces from one Droplet (#22).
 
 ## Planned (filed, not built)
-- `hauz gmail-auth` loopback consent (#57); server Gmail poll (#43).
+- `hauz gmail-auth` consent (#57).
 
 ## Risks / debt
-- Pre-#38 non-ISO currency rows are `Corrupt`. A bad PDF xref reads empty.
+- Pre-#38 non-ISO rows are `Corrupt`; a bad PDF xref reads empty.
 - Single-writer SQLite (more writers: Turso/Postgres).
