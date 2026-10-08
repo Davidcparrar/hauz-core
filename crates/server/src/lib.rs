@@ -4,6 +4,7 @@
 //! `Content-Type` enforcement, no logging: those are deliberately out of scope here.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::Request;
@@ -17,8 +18,11 @@ use axum::{Json, Router};
 use hauz_core::bill::BillId;
 use hauz_core::extract::Extractor;
 use hauz_core::ingest::{Error as IngestError, Outcome, ingest};
+use hauz_core::mail::{self, Fetched, MailSource};
 use hauz_core::store::BillStore;
 use serde::Serialize;
+use time::OffsetDateTime;
+use tokio::time::MissedTickBehavior;
 
 /// The maximum accepted `POST /v1/ingest/email` body size: an oversized body is rejected
 /// with 413 before `ingest` ever sees it.
@@ -191,4 +195,100 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
+}
+
+/// The background Gmail poll: every tick runs [`mail::fetch`] over the last two UTC days of
+/// the configured label, into the same extractor and store the webhook uses.
+pub struct Poller {
+    source: Arc<dyn MailSource>,
+    config: mail::Config,
+    extractor: Arc<dyn Extractor>,
+    store: Arc<dyn BillStore>,
+}
+
+impl Poller {
+    /// A poller over an injected mail source (a system edge), the Gmail `config` supplying the
+    /// label, and the extractor and store to ingest into.
+    #[must_use]
+    pub fn new(
+        source: Arc<dyn MailSource>,
+        config: mail::Config,
+        extractor: Arc<dyn Extractor>,
+        store: Arc<dyn BillStore>,
+    ) -> Self {
+        Self {
+            source,
+            config,
+            extractor,
+            store,
+        }
+    }
+
+    /// Runs one poll at `now` with `config.poll_query(now)`.
+    ///
+    /// # Errors
+    /// Whatever [`mail::fetch`] returns: a failed list or download, or a store failure.
+    pub async fn tick(&self, now: OffsetDateTime) -> Result<Vec<Fetched>, mail::Error> {
+        mail::fetch(
+            &*self.source,
+            &self.config.poll_query(now),
+            &*self.extractor,
+            &*self.store,
+        )
+        .await
+    }
+
+    /// Polls forever on a background task: the first tick runs immediately, then one every
+    /// `interval` (a slow tick delays the next rather than bursting). Each tick is reported
+    /// through `log`; a failed tick is logged and retried at the next one.
+    ///
+    /// # Panics
+    /// The task panics if `interval` is zero; [`mail::Config::poll_interval`] never is.
+    pub fn spawn(
+        self,
+        interval: Duration,
+        mut log: impl FnMut(String) + Send + 'static,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                ticker.tick().await;
+                match self.tick(OffsetDateTime::now_utc()).await {
+                    Ok(fetched) => report(&fetched, &mut log),
+                    Err(err) => log(format!("gmail poll failed: {err}")),
+                }
+            }
+        })
+    }
+}
+
+impl std::fmt::Debug for Poller {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Poller")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One summary line, then one line per message that failed to ingest.
+fn report(fetched: &[Fetched], log: &mut impl FnMut(String)) {
+    let created = fetched
+        .iter()
+        .filter(|f| matches!(f.outcome, Ok(Outcome::Created(_))))
+        .count();
+    let duplicate = fetched
+        .iter()
+        .filter(|f| matches!(f.outcome, Ok(Outcome::Duplicate(_))))
+        .count();
+    let failed = fetched.iter().filter(|f| f.outcome.is_err()).count();
+    log(format!(
+        "gmail poll: {} messages ({created} created, {duplicate} duplicate, {failed} failed)",
+        fetched.len()
+    ));
+    for item in fetched {
+        if let Err(err) = &item.outcome {
+            log(format!("gmail poll: failed {}: {err}", item.id.as_str()));
+        }
+    }
 }
