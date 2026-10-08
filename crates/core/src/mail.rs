@@ -75,8 +75,8 @@ pub struct Page {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// A required environment variable is missing.
-    #[error("missing configuration: {variable}")]
+    /// A required environment variable is missing or invalid.
+    #[error("missing or invalid configuration: {variable}")]
     Config {
         /// The variable name.
         variable: String,
@@ -426,6 +426,9 @@ impl DateRange {
     }
 }
 
+/// `HAUZ_GMAIL_POLL_SECS` when unset.
+const DEFAULT_POLL_SECS: u64 = 1800;
+
 /// The Gmail configuration read from the environment. `Debug` redacts secrets.
 #[derive(Clone)]
 pub struct Config {
@@ -433,6 +436,7 @@ pub struct Config {
     label: String,
     token_url: Option<String>,
     api_base: Option<String>,
+    poll_interval: Duration,
 }
 
 impl fmt::Debug for Config {
@@ -442,6 +446,7 @@ impl fmt::Debug for Config {
             .field("label", &self.label)
             .field("token_url", &self.token_url)
             .field("api_base", &self.api_base)
+            .field("poll_interval", &self.poll_interval)
             .finish()
     }
 }
@@ -449,10 +454,12 @@ impl fmt::Debug for Config {
 impl Config {
     /// Reads `HAUZ_GMAIL_*` through `get`. No `HAUZ_GMAIL_CLIENT_ID` means Gmail is not
     /// configured (`Ok(None)`); otherwise `_CLIENT_SECRET`, `_REFRESH_TOKEN` and `_LABEL` are
-    /// required, and `_TOKEN_URL` / `_API_BASE` optionally override Google's endpoints.
+    /// required, `_TOKEN_URL` / `_API_BASE` optionally override Google's endpoints, and
+    /// `_POLL_SECS` (an integer >= 1, default 1800) sets the poll interval.
     ///
     /// # Errors
-    /// `Error::Config { variable }` naming the first missing (or empty) required variable.
+    /// `Error::Config { variable }` naming the first missing (or empty) required variable, or
+    /// `HAUZ_GMAIL_POLL_SECS` when it is not an integer >= 1.
     pub fn from_env(get: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, Error> {
         let Some(client_id) = get("HAUZ_GMAIL_CLIENT_ID").filter(|v| !v.is_empty()) else {
             return Ok(None);
@@ -464,6 +471,16 @@ impl Config {
                     variable: variable.to_owned(),
                 })
         };
+        let poll_interval = match get("HAUZ_GMAIL_POLL_SECS") {
+            None => DEFAULT_POLL_SECS,
+            Some(raw) => raw
+                .parse::<u64>()
+                .ok()
+                .filter(|secs| *secs >= 1)
+                .ok_or_else(|| Error::Config {
+                    variable: "HAUZ_GMAIL_POLL_SECS".to_owned(),
+                })?,
+        };
         Ok(Some(Self {
             credentials: Credentials {
                 client_id,
@@ -473,6 +490,7 @@ impl Config {
             label: require("HAUZ_GMAIL_LABEL")?,
             token_url: get("HAUZ_GMAIL_TOKEN_URL"),
             api_base: get("HAUZ_GMAIL_API_BASE"),
+            poll_interval: Duration::from_secs(poll_interval),
         }))
     }
 
@@ -490,6 +508,27 @@ impl Config {
             query.push_str(&format!(" before:{}", epoch(d)));
         }
         query
+    }
+
+    /// How long the server's background poll waits between ticks.
+    #[must_use]
+    pub fn poll_interval(&self) -> Duration {
+        self.poll_interval
+    }
+
+    /// The query a background poll tick runs at `now`: the configured label, after UTC midnight
+    /// of the day before `now`'s UTC day (so yesterday and today are covered).
+    #[must_use]
+    pub fn poll_query(&self, now: time::OffsetDateTime) -> String {
+        let yesterday = now.to_offset(time::UtcOffset::UTC).date().previous_day();
+        let after = yesterday.map(|day| DateRange {
+            after: Some(day),
+            before: None,
+        });
+        self.query(&after.unwrap_or(DateRange {
+            after: None,
+            before: None,
+        }))
     }
 
     /// A [`GmailSource`] for these credentials and endpoints.

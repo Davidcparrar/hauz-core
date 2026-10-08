@@ -373,3 +373,44 @@ fn ac9_date_range_bounds_the_query_and_rejects_bad_input() -> Result<()> {
     }
     Ok(())
 }
+
+fn full_with(extra: (&'static str, &'static str)) -> impl Fn(&str) -> Option<String> {
+    let mut pairs = FULL.to_vec();
+    pairs.push(extra);
+    let map: HashMap<String, String> = pairs
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+    move |key| map.get(key).cloned()
+}
+
+#[test]
+fn ac1_poll_interval_defaults_to_1800_and_reads_env() -> Result<()> {
+    let default = Config::from_env(env(&FULL))?.ok_or("configured")?;
+    assert_eq!(
+        default.poll_interval(),
+        std::time::Duration::from_secs(1800)
+    );
+    let set = Config::from_env(full_with(("HAUZ_GMAIL_POLL_SECS", "45")))?.ok_or("configured")?;
+    assert_eq!(set.poll_interval(), std::time::Duration::from_secs(45));
+    Ok(())
+}
+
+#[test]
+fn ac2_rejects_invalid_poll_secs() -> Result<()> {
+    for bad in ["0", "-5", "abc", ""] {
+        match Config::from_env(full_with(("HAUZ_GMAIL_POLL_SECS", bad))) {
+            Err(Error::Config { variable }) => assert_eq!(variable, "HAUZ_GMAIL_POLL_SECS"),
+            other => return Err(format!("`{bad}`: expected Config error, got {other:?}").into()),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ac3_poll_query_covers_yesterday_and_today_utc() -> Result<()> {
+    let config = Config::from_env(env(&FULL))?.ok_or("configured")?;
+    let now = time::macros::datetime!(2026-10-07 00:30:00 +5);
+    assert_eq!(config.poll_query(now), "label:bills after:1791158400");
+    Ok(())
+}
