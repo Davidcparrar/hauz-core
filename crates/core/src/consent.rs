@@ -201,31 +201,48 @@ impl From<std::io::Error> for Error {
 }
 
 /// Serves the loopback until the redirect arrives; returns its code if `state` matches.
+/// Each connection is read in its own task so an idle preconnect socket cannot block it.
 async fn await_code(listener: &TcpListener, state: &str) -> Result<String, Error> {
+    let mut connections = tokio::task::JoinSet::new();
     loop {
-        let (mut stream, _) = listener.accept().await.map_err(Error::from)?;
-        let redirect = read_redirect(&mut stream).await.unwrap_or(Redirect::Other);
-        let (sent, result) = match redirect {
-            Redirect::Other => {
-                respond(&mut stream, "404 Not Found", "Not found.").await;
-                continue;
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _) = accepted.map_err(Error::from)?;
+                let state = state.to_owned();
+                connections.spawn(serve(stream, state));
             }
-            Redirect::Code { state: got, .. } | Redirect::Error { state: got, .. }
-                if got.as_deref() != Some(state) =>
-            {
-                ("400 Bad Request", Err(Error::StateMismatch))
+            Some(finished) = connections.join_next() => {
+                if let Ok(Some(result)) = finished {
+                    return result;
+                }
             }
-            Redirect::Error { reason, .. } => ("400 Bad Request", Err(Error::Denied { reason })),
-            Redirect::Code { code, .. } => ("200 OK", Ok(code)),
-        };
-        let body = if result.is_ok() {
-            "Consent received. You can close this tab."
-        } else {
-            "Consent failed. See the terminal."
-        };
-        respond(&mut stream, sent, body).await;
-        return result;
+        }
     }
+}
+
+/// Answers one connection; `Some` carries the consent outcome, `None` a non-redirect request.
+async fn serve(mut stream: TcpStream, state: String) -> Option<Result<String, Error>> {
+    let redirect = read_redirect(&mut stream).await.unwrap_or(Redirect::Other);
+    let (sent, result) = match redirect {
+        Redirect::Other => {
+            respond(&mut stream, "404 Not Found", "Not found.").await;
+            return None;
+        }
+        Redirect::Code { state: got, .. } | Redirect::Error { state: got, .. }
+            if got.as_deref() != Some(state.as_str()) =>
+        {
+            ("400 Bad Request", Err(Error::StateMismatch))
+        }
+        Redirect::Error { reason, .. } => ("400 Bad Request", Err(Error::Denied { reason })),
+        Redirect::Code { code, .. } => ("200 OK", Ok(code)),
+    };
+    let body = if result.is_ok() {
+        "Consent received. You can close this tab."
+    } else {
+        "Consent failed. See the terminal."
+    };
+    respond(&mut stream, sent, body).await;
+    Some(result)
 }
 
 /// Reads the request line and extracts the redirect's parameters.

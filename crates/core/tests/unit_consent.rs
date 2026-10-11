@@ -101,12 +101,21 @@ async fn run(
         let handle = tokio::spawn(async move {
             let client = reqwest::Client::new();
             let mut statuses = Vec::new();
+            let mut idle = Vec::new();
             for path in paths {
+                if path == "IDLE" {
+                    let addr = base.trim_start_matches("http://");
+                    if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
+                        idle.push(stream);
+                    }
+                    continue;
+                }
                 let url = format!("{base}{}", path.replace("{state}", &state));
                 if let Ok(response) = client.get(url).send().await {
                     statuses.push(response.status().as_u16());
                 }
             }
+            drop(idle);
             statuses
         });
         if let Ok(mut slot) = browser_in.lock() {
@@ -226,11 +235,16 @@ async fn ac4_shows_url_exchanges_code_and_returns_refresh_token() -> Result<()> 
 #[tokio::test(flavor = "multi_thread")]
 async fn ac5_ignores_requests_without_code_then_completes() -> Result<()> {
     let (forms, base) = fake_token(200, TOKEN_OK).await?;
-    let (result, _, statuses) = run(
-        &config(&base)?,
-        vec!["/favicon.ico", "/?state={state}&code=CODE-1"],
+    // "IDLE" is a browser preconnect socket that sends nothing and stays open.
+    let (result, _, statuses) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        run(
+            &config(&base)?,
+            vec!["IDLE", "/favicon.ico", "/?state={state}&code=CODE-1"],
+        ),
     )
-    .await?;
+    .await
+    .map_err(|_| "authorize hung behind an idle connection")??;
     assert_eq!(result?, "RT-1");
     assert_eq!(statuses, vec![404, 200]);
     assert_eq!(forms.lock().map_err(|_| "poisoned")?.len(), 1);
