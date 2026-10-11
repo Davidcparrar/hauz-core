@@ -5,3 +5,6 @@ VERDICT: REJECT code-defect
 3. docs/architecture.md: PROMOTES consent missing (Leader step 8).
 Note: TDD order not followed (tests after code); not a rejection reason.
 
+## Cycle 2
+VERDICT: APPROVE
+Cycle-1 items 1-3 resolved (JoinSet + select!, AC5 idle-socket regression, architecture/decisions). verify.sh green; Cargo.lock unchanged; no secrets in errors.
