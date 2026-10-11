@@ -13,6 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context;
+use hauz_core::consent;
 use hauz_core::extract::{
     Chain, Escalate, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor,
 };
@@ -40,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
             db,
             reextract,
         } => run_ingest(&path, &db, reextract).await,
+        Command::GmailAuth => run_gmail_auth().await,
         Command::Fetch { db, after, before } => {
             let range = match mail::DateRange::parse(after.as_deref(), before.as_deref()) {
                 Ok(range) => range,
@@ -51,6 +53,17 @@ async fn main() -> anyhow::Result<()> {
             run_fetch(&db, &range).await
         }
     }
+}
+
+/// Runs the Gmail loopback consent: the URL goes to stderr, stdout carries only the env line.
+async fn run_gmail_auth() -> anyhow::Result<()> {
+    let config = consent::Config::from_env(|key| env::var(key).ok())?;
+    let token = consent::authorize(&config, consent::entropy()?, |url| {
+        eprintln!("Open this URL in a browser to grant read-only Gmail access:\n{url}");
+    })
+    .await?;
+    println!("HAUZ_GMAIL_REFRESH_TOKEN={token}");
+    Ok(())
 }
 
 /// Reads `path`, then resolves the LLM config before opening `db`, so neither a bad path nor

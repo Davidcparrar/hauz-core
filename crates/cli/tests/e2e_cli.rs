@@ -714,3 +714,130 @@ async fn ac11_reextract_malformed_exits_1_and_fetch_rejects_flag() -> common::Re
     assert_eq!(fetch.status.code(), Some(2));
     Ok(())
 }
+
+fn auth_command(dir: &std::path::Path, base: &str) -> common::Result<Command> {
+    let mut command = Command::cargo_bin("hauz")?;
+    command
+        .current_dir(dir)
+        .env("HAUZ_GMAIL_CLIENT_ID", "cid")
+        .env("HAUZ_GMAIL_CLIENT_SECRET", "sec")
+        .env("HAUZ_GMAIL_AUTH_URL", format!("{base}/auth"))
+        .env("HAUZ_GMAIL_TOKEN_URL", format!("{base}/token"));
+    Ok(command)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ac9_gmail_auth_prints_refresh_token_line() -> common::Result<()> {
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::Stdio;
+
+    let dir = common::tmp_dir();
+    let base = fake_gmail(
+        (
+            200,
+            r#"{"access_token":"at","refresh_token":"RT-FAKE","expires_in":3600}"#,
+        ),
+        vec![],
+    )
+    .await?;
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("hauz"))
+        .arg("gmail-auth")
+        .current_dir(&dir)
+        .env("HAUZ_GMAIL_CLIENT_ID", "cid")
+        .env("HAUZ_GMAIL_CLIENT_SECRET", "sec")
+        .env("HAUZ_GMAIL_AUTH_URL", format!("{base}/auth"))
+        .env("HAUZ_GMAIL_TOKEN_URL", format!("{base}/token"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let url = BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find(|line| line.starts_with("http"))
+        .ok_or("no consent URL on stderr")?;
+    let shown: std::collections::HashMap<String, String> = query_pairs(&url)?;
+    let redirect = format!(
+        "{}/?state={}&code=CODE-1",
+        shown.get("redirect_uri").ok_or("no redirect_uri")?,
+        shown.get("state").ok_or("no state")?
+    );
+    let status = http_get(&redirect)?;
+    assert!(status.starts_with("HTTP/1.1 200"), "{status}");
+
+    let mut stdout = String::new();
+    child
+        .stdout
+        .take()
+        .ok_or("no stdout")?
+        .read_to_string(&mut stdout)?;
+    assert!(child.wait()?.success());
+    assert_eq!(stdout, "HAUZ_GMAIL_REFRESH_TOKEN=RT-FAKE\n");
+    Ok(())
+}
+
+/// Splits a URL's `key=value` query pairs, percent-decoding `%XX`.
+fn query_pairs(url: &str) -> common::Result<std::collections::HashMap<String, String>> {
+    let query = url.split_once('?').ok_or("no query")?.1;
+    let decode = |s: &str| -> String {
+        let bytes = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while let Some(&b) = bytes.get(i) {
+            let hex = bytes
+                .get(i + 1..i + 3)
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            match (b, hex) {
+                (b'%', Some(v)) => {
+                    out.push(v);
+                    i += 3;
+                }
+                _ => {
+                    out.push(b);
+                    i += 1;
+                }
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    Ok(query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(k, v)| (decode(k), decode(v)))
+        .collect())
+}
+
+/// A bare HTTP/1.1 GET over a std socket; returns the status line.
+fn http_get(url: &str) -> common::Result<String> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let rest = url.strip_prefix("http://").ok_or("not http")?;
+    let (host, path) = rest.split_once('/').ok_or("no path")?;
+    let mut stream = std::net::TcpStream::connect(host)?;
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut status = String::new();
+    BufReader::new(stream).read_line(&mut status)?;
+    Ok(status)
+}
+
+#[test]
+fn ac10_gmail_auth_missing_secret_exits_1_and_extra_arg_exits_2() -> common::Result<()> {
+    let dir = common::tmp_dir();
+    let output = auth_command(&dir, "http://127.0.0.1:1")?
+        .env_remove("HAUZ_GMAIL_CLIENT_SECRET")
+        .arg("gmail-auth")
+        .output()?;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8(output.stderr)?.contains("HAUZ_GMAIL_CLIENT_SECRET"));
+    assert!(output.stdout.is_empty());
+
+    let output = auth_command(&dir, "http://127.0.0.1:1")?
+        .args(["gmail-auth", "extra"])
+        .output()?;
+    assert_eq!(output.status.code(), Some(2));
+    Ok(())
+}
