@@ -58,7 +58,7 @@ fake token endpoint; the "browser" is a `reqwest` GET to the shown URL's `redire
 - AC1 [unit] WHEN `HAUZ_GMAIL_CLIENT_ID` or `_CLIENT_SECRET` is missing or empty THE SYSTEM
   SHALL return `Error::Config` naming it, even when `_REFRESH_TOKEN`/`_LABEL` are unset.
 - AC2 [unit] WHEN given RFC 7636 Appendix B's verifier THE SYSTEM SHALL return
-  `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuEGSstw-cM`.
+  `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM`.
 - AC3 [unit] WHEN `entropy()` is called twice THE SYSTEM SHALL return different arrays.
 - AC4 [unit] WHEN the browser redirects with the matching `state` and a `code` THE SYSTEM SHALL
   have shown a URL carrying every parameter above (`redirect_uri` on `127.0.0.1`, nonzero port),
