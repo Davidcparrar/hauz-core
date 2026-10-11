@@ -42,8 +42,7 @@ Mail arrives by webhook, Gmail fetch or poll.
   Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
   field, notes unioned; order-insensitive, idempotent), `TextExtractor` (no-regex scanner over `text` and stripped `html`; a bare `$` is no currency; vendor `sender_name` else domain, confidence 20),
   `PdfTextExtractor` (same scanner over each PDF's `text_layer(&[u8]) ->
-  Result<Option<String>>`, pdf-extract under `catch_unwind`; image-only ⇒ `NoTextLayer`,
-  corrupt ⇒ `Error::Pdf`),
+  Result<Option<String>>` under `catch_unwind`; image-only ⇒ `NoTextLayer`, corrupt ⇒ `Error::Pdf`),
   `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` fields at confidence 100; unsupported zip ⇒ `UnreadableArchive`, malformed ⇒ `Error::Zip`), `Chain`
   (`Chain::new(Vec<Box<dyn Extractor>>)`, an `Extractor`: runs each in order, first
   `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`:
@@ -57,7 +56,7 @@ Mail arrives by webhook, Gmail fetch or poll.
   `trait Rasterizer { fn rasterize(&self, pdf, max_pages) -> Result<Vec<Vec<u8>>> }` with
   `Pdftoppm::new(dpi)` (shells out),
   `Config::from_env(get)` (`HAUZ_LLM_PROVIDER`, `HAUZ_LLM_MODEL`, provider key/URL); `Error { Client, Unsupported, Rasterizer, Config }`.
-  `LlmExtractor::new(client, rasterizer, LlmOptions { delivery: PdfDelivery { RasterizedPages | Native }, max_pages, max_confidence, max_body_chars })` (`Default`: pages, 4, 70, 20k) is an `Extractor`: sends body, PDF pages (or PDFs), text layers; maps nullable JSON through `bill`, caps confidence; a `Client` error or bad JSON ⇒ empty extraction + `Note::LlmUnavailable`/`LlmMalformed` ; `Unsupported`/`Rasterizer` ⇒ `extract::Error::Llm`.
+  `LlmExtractor::new(client, rasterizer, LlmOptions { delivery, max_pages, max_confidence, max_body_chars })` (`Default`: pages, 4, 70, 20k), an `Extractor`, maps JSON through `bill`, caps confidence; `Client` error/bad JSON ⇒ empty + `Note::LlmUnavailable`/`LlmMalformed`; `Unsupported`/`Rasterizer` ⇒ `extract::Error::Llm`.
 - `zip` — owns archive decoding, std only: `read(&[u8]) -> Result<Vec<Entry { name, bytes }>,
   Error>` inflates methods 0/8 (hand-rolled), CRC/size-checked; `MAX_ENTRY_BYTES` (64 MiB); `Error { Malformed { reason }, Unsupported {
   feature } }` for zip64, encryption, data descriptors, other methods.
@@ -75,6 +74,9 @@ Mail arrives by webhook, Gmail fetch or poll.
   refresh token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, redacted), `poll_interval()`, `query(&DateRange)` (UTC days), `poll_query(now)` (since yesterday UTC),
   `fetch(source, query, ex, st) -> Vec<Fetched>`: `Email`/`Extract` errors
   recorded per message, others abort; `Error { Config, Auth, Transport, Malformed, InvalidRange, Ingest }`.
+- `consent` — Gmail OAuth consent: `Config::from_env(get)`,
+  `entropy()`, `pkce_challenge`, `authorize(config, entropy, show)` (concurrent loopback, PKCE S256) ⇒ refresh token;
+  `Error { Config, Io, StateMismatch, Denied, Auth, Transport, Malformed }`.
 
 ## Entry points
 - server (`crates/server`, lib + `main.rs`): `AppState::new(store, extractor, ApiToken)` (`ApiToken::new`: blank ⇒ `None`,
@@ -84,18 +86,14 @@ Mail arrives by webhook, Gmail fetch or poll.
   reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([Xml, Text, PdfText])`, in `Escalate` over
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set, and spawns a `Poller` when Gmail is set
-  (untested). `Poller::new(source, config, ex, st)`: `tick(now)` = `fetch(poll_query)`;
-  `spawn(interval, log)` loops; errors retry.
-- cli (`crates/cli`, bin `hauz`): `hauz ingest [--reextract] <file.eml>` / `hauz fetch [--after|--before <day>]`,
+  (untested). `Poller::new(source, config, ex, st)`: `tick(now)` = `fetch(poll_query)`; `spawn` loops, retrying.
+- cli (`crates/cli`, bin `hauz`): `hauz ingest [--reextract] <file.eml>` / `hauz fetch [--after|--before <day>]` / `hauz gmail-auth` (prints `HAUZ_GMAIL_REFRESH_TOKEN=…`),
   `[--db <path>]` (default `./hauz.db`); config resolves before the DB opens. Stdout per
   message: `Created|Duplicate|Updated|Unchanged <id>` or `Failed <gmail id>: <error>`. Exit 1 runtime, 2 usage.
 - tui (`crates/tui`, lib + bin `hauz-tui [--db <path>]`): pub `load` (`open_read_only` + `list`, before the terminal opens), `App` (`r` filters `needs_review`), `draw`. Exits as cli.
 
 ## Storage
 SQLite (sqlx, WAL); Litestream replicates to DigitalOcean Spaces from one Droplet (#22).
-
-## Planned (filed, not built)
-- `hauz gmail-auth` consent (#57).
 
 ## Risks / debt
 - Pre-#38 non-ISO rows are `Corrupt`; a bad PDF xref reads empty.
