@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// Printed on usage errors (stderr, exit 2) and on `-h`/`--help` (stdout, exit 0).
-pub(crate) const USAGE: &str = "usage: hauz ingest [--reextract] <file.eml> [--db <sqlite path>]\n       hauz fetch [--db <sqlite path>] [--after <YYYY-MM-DD>] [--before <YYYY-MM-DD>]";
+pub(crate) const USAGE: &str = "usage: hauz ingest [--reextract] <file.eml> [--db <sqlite path>]\n       hauz fetch [--db <sqlite path>] [--after <YYYY-MM-DD>] [--before <YYYY-MM-DD>]\n       hauz gmail-auth";
 
 /// `--db`'s default when the flag is absent.
 const DEFAULT_DB: &str = "hauz.db";
@@ -25,6 +25,8 @@ pub(crate) enum Command {
         after: Option<String>,
         before: Option<String>,
     },
+    /// `hauz gmail-auth`: the one-time Gmail consent.
+    GmailAuth,
     /// `hauz -h` or `hauz --help`.
     Help,
 }
@@ -54,6 +56,10 @@ pub(crate) fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command,
         "-h" | "--help" => Ok(Command::Help),
         "ingest" => parse_ingest(args),
         "fetch" => parse_fetch(args),
+        "gmail-auth" => match args.next() {
+            None => Ok(Command::GmailAuth),
+            Some(extra) => Err(UsageError::new(extra.to_string_lossy().into_owned())),
+        },
         other => Err(UsageError::new(other.to_owned())),
     }
 }

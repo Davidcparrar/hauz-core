@@ -5,6 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub mod bill;
+pub mod consent;
 pub mod email;
 pub mod extract;
 pub mod ingest;

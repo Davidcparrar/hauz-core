@@ -14,7 +14,7 @@ use crate::extract::Extractor;
 use crate::ingest::{self, Outcome, ingest};
 use crate::store::BillStore;
 
-const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const DEFAULT_API_BASE: &str = "https://gmail.googleapis.com";
 const MAX_RESULTS: &str = "500";
 /// Refresh this long before the token's stated expiry.
@@ -353,6 +353,23 @@ fn percent_encode(segment: &str) -> String {
             out.push(char::from(byte));
         } else {
             out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Encodes `bytes` as base64url (RFC 4648 §5) without padding.
+pub(crate) fn encode_base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..=chunk.len() {
+            let index = usize::try_from((n >> (18 - 6 * i)) & 0x3f).unwrap_or(0);
+            out.extend(ALPHABET.get(index).copied().map(char::from));
         }
     }
     out
