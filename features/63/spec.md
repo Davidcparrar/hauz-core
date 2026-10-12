@@ -12,8 +12,8 @@ serves the same view as server-rendered HTML with Topcoat. It is the first step 
 
 ## Assumptions
 - [spike-verified] Topcoat `=0.10.0` with `default-features = false` and features
-  `router, serve, view, discover` adds 45 lock packages and no duplicates (tokio/hyper/tower
-  unify). MSRV 1.98. Owner approved (#63).
+  `router, serve, view, discover` adds 46 lock packages; tokio/hyper/tower unify, only
+  `hkdf`/`hmac`/`matchit`/`rand_chacha` gain a second version (lock-verified on the branch). MSRV 1.98. Owner approved (#63).
 - [spike-verified] Pages render in-process via `Router::handle(Request)` with
   `http_body_util` to read the body. State comes in via `.app_context(store)` and
   `app_context::<SqliteStore>(cx)`. Dynamic segments use `module_param!`.

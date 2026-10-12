@@ -11,36 +11,35 @@ Mail arrives by webhook, Gmail fetch or poll.
 
 ## Crate map
 ```
-┌──────────────┐ ┌─────────────┐ ┌──────────────┐
-│ server (bin) │ │ cli (bin)   │ │ tui (bin)    │  thin shells
-│ axum         │ │ hauz ingest │ │ read-only    │
-└──────┬───────┘ └──────┬──────┘ └──────┬───────┘
-       └────────────────┼───────────────┘
-                        ▼
-        ┌───────────────┐
-        │ core (lib)    │   all domain logic; the only crate specs test
-        └───────────────┘
+┌──────────────┐ ┌─────────────┐ ┌──────────────┐ ┌──────────────┐
+│ server (bin) │ │ cli (bin)   │ │ tui (bin)    │ │ web (bin)    │  thin shells
+│ axum         │ │ hauz ingest │ │ read-only    │ │ topcoat, r/o │
+└──────┬───────┘ └──────┬──────┘ └──────┬───────┘ └──────┬───────┘
+       └────────────────┴───────┬───────┴────────────────┘
+                                ▼
+                ┌───────────────┐
+                │ core (lib)    │   all domain logic; the only crate specs test
+                └───────────────┘
    binaries → core only; core never imports a binary or a spike
 ```
 
 ## Modules in `core`
 - `bill` — owns the domain vocabulary: `Bill`, `BillDraft`, `BillId`, `Money`
   (minor units + `Currency`: active ISO 4217 only), `Vendor`, `BillingPeriod`, `Status { Extracted, NeedsReview }`.
-  `Bill` only via `TryFrom<BillDraft>`, serde too.
+  `Bill` only via `TryFrom<BillDraft>`.
   `Extracted` needs vendor + amount + (period or `issued`); other fields optional.
-- `email` — owns MIME decoding (mail-parser): `Envelope::parse(&[u8]) ->
-  Result<Envelope, Error>`. `Envelope` and `Document` are pub-field records: `subject`,
-  `sender` (addr-spec, required), `sender_name` (display name; `None` if blank or = `sender`), `date` (UTC), `text`, `html`, `documents: Vec<Document
-  { mime: MimeType, filename, bytes }>` per attachment, `message/rfc822` not recursed; `MimeType` lowercase. `Error { Malformed, MissingSender, InvalidMimeType }`.
+- `email` — owns MIME decoding (mail-parser): `Envelope::parse(&[u8])`; `Envelope` and `Document` are pub-field records: `subject`,
+  `sender` (addr-spec, required), `sender_name` (display name, `None` if blank or = `sender`), `date` (UTC), `text`, `html`, `documents: Vec<Document
+  { mime: MimeType, filename, bytes }>` per attachment, no `message/rfc822` recursion. `Error { Malformed, MissingSender, InvalidMimeType }`.
 - `extract` — owns "envelope ⇒ candidate fields": `trait Extractor: Send +
   Sync { fn extract<'a>(&'a self, &'a Envelope) -> BoxFuture<'a, Result<Extraction, Error>> }`
-  (`dyn`-safe), `Extraction` (pub fields `amount`, `issued`, `due`, `period`, `vendor`, each
+  `Extraction` (pub fields `amount`, `issued`, `due`, `period`, `vendor`, each
   `Option<Field<T>>`; `is_complete(min_confidence: u8)` ⇔ amount at ≥ threshold plus vendor
   plus (period or issued)), `Field<T> { value, confidence: Confidence (0..=100), span: Span
   { source: Source { Text, Html, Document(i), Model }, start, end } }`, `notes: BTreeSet<Note
   { NoTextLayer { document }, UnreadableArchive { document }, LlmUnavailable, LlmMalformed }>`, `Error { InvalidConfidence, Pdf,
   Llm(llm::Error), Zip { document, source } }`), `merge(Vec<Extraction>)` (highest confidence per
-  field, notes unioned; order-insensitive, idempotent), `TextExtractor` (no-regex scanner over `text` and stripped `html`; a bare `$` is no currency; vendor `sender_name` else domain, confidence 20),
+  field, notes unioned; idempotent), `TextExtractor` (scanner over `text` and stripped `html`; bare `$` is no currency; vendor `sender_name` else domain, confidence 20),
   `PdfTextExtractor` (same scanner over each PDF's `text_layer(&[u8]) ->
   Result<Option<String>>` under `catch_unwind`; image-only ⇒ `NoTextLayer`, corrupt ⇒ `Error::Pdf`),
   `XmlInvoiceExtractor` (DIAN zips via `zip::read`: UBL `Invoice` fields at confidence 100; unsupported zip ⇒ `UnreadableArchive`, malformed ⇒ `Error::Zip`), `Chain`
@@ -56,17 +55,16 @@ Mail arrives by webhook, Gmail fetch or poll.
   `trait Rasterizer { fn rasterize(&self, pdf, max_pages) -> Result<Vec<Vec<u8>>> }` with
   `Pdftoppm::new(dpi)` (shells out),
   `Config::from_env(get)` (`HAUZ_LLM_PROVIDER`, `HAUZ_LLM_MODEL`, provider key/URL); `Error { Client, Unsupported, Rasterizer, Config }`.
-  `LlmExtractor::new(client, rasterizer, LlmOptions { delivery, max_pages, max_confidence, max_body_chars })` (`Default`: pages, 4, 70, 20k), an `Extractor`, maps JSON through `bill`, caps confidence; `Client` error/bad JSON ⇒ empty + `Note::LlmUnavailable`/`LlmMalformed`; `Unsupported`/`Rasterizer` ⇒ `extract::Error::Llm`.
+  `LlmExtractor::new(client, rasterizer, LlmOptions { delivery, max_pages, max_confidence, max_body_chars })` (`Default`: pages, 4, 70, 20k): an `Extractor`; maps JSON through `bill`, caps confidence; `Client` error/bad JSON ⇒ empty + `Note::LlmUnavailable`/`LlmMalformed`; `Unsupported`/`Rasterizer` ⇒ `extract::Error::Llm`.
 - `zip` — owns archive decoding, std only: `read(&[u8]) -> Result<Vec<Entry { name, bytes }>,
-  Error>` inflates methods 0/8 (hand-rolled), CRC/size-checked; `MAX_ENTRY_BYTES` (64 MiB); `Error { Malformed { reason }, Unsupported {
+  Error>` inflates methods 0/8, CRC-checked; `MAX_ENTRY_BYTES` (64 MiB); `Error { Malformed { reason }, Unsupported {
   feature } }` for zip64, encryption, data descriptors, other methods.
 - `ingest` — owns the pipeline: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
   st: &dyn BillStore) -> Result<Outcome, Error>`, `Outcome { Created(BillId),
   Duplicate(BillId) }`, `raw_hash(&[u8]) -> RawHash` (SHA-256), `EXTRACTED_MIN_CONFIDENCE`
   (50), `Error { Email, Extract, Store, Bill }`. Order: hash →
-  `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = lowercase
-  hex of the hash. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
-  `NeedsReview` keeping present fields. A parse or extractor `Err` stores nothing; `notes` are not persisted.
+  `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = hash hex. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
+  `NeedsReview` keeping present fields. Parse/extractor `Err` stores nothing; `notes` aren't persisted.
   `reextract` (same args, no short-circuit) ⇒ `Reextracted { Created, Updated, Unchanged }`
   (insert / exact `replace` / equal, no write).
 - `mail` — owns the mail-source edge: `trait MailSource { list(query, page) -> Page { ids,
@@ -82,18 +80,18 @@ Mail arrives by webhook, Gmail fetch or poll.
 - server (`crates/server`, lib + `main.rs`): `AppState::new(store, extractor, ApiToken)` (`ApiToken::new`: blank ⇒ `None`,
   `Debug` redacted), `router(state)`, `MAX_BODY_BYTES` (25 MiB ⇒ 413). Every `/v1` route needs
   `Authorization: Bearer <token>` (constant-time), else 401 `"unauthorized"` pre-body. `POST /v1/ingest/email` takes raw RFC 5322 bytes: 201 created / 200 duplicate, body `{"id"}`, 400 on `ingest::Error::{Email,
-  Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: 200 `Bill` JSON (`BillDraft` shape), else 404. `main.rs`
+  Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: `Bill` JSON or 404. `main.rs`
   reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([Xml, Text, PdfText])`, in `Escalate` over
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set, and spawns a `Poller` when Gmail is set
   (untested). `Poller::new(source, config, ex, st)`: `tick(now)` = `fetch(poll_query)`; `spawn` loops, retrying.
 - cli (`crates/cli`, bin `hauz`): `hauz ingest [--reextract] <file.eml>` / `hauz fetch [--after|--before <day>]` / `hauz gmail-auth` (prints `HAUZ_GMAIL_REFRESH_TOKEN=…`),
-  `[--db <path>]` (default `./hauz.db`); config resolves before the DB opens. Stdout per
-  message: `Created|Duplicate|Updated|Unchanged <id>` or `Failed <gmail id>: <error>`. Exit 1 runtime, 2 usage.
-- tui (`crates/tui`, lib + bin `hauz-tui [--db <path>]`): pub `load` (`open_read_only` + `list`, before the terminal opens), `App` (`r` filters `needs_review`), `draw`. Exits as cli.
+  `[--db <path>]` (default `./hauz.db`); config resolves before the DB opens. Stdout: `Created|Duplicate|Updated|Unchanged <id>` or `Failed <gmail id>: <error>`. Exit 1 runtime, 2 usage.
+- tui (`crates/tui`, bin `hauz-tui [--db]`): pub `load` (`open_read_only` + `list`, pre-terminal), `App` (`r` filters `needs_review`), `draw`. Exits as cli.
+- web (`crates/web`, bin `hauz-web [--db] [--port]`, Topcoat, `127.0.0.1`, no auth): pub `router(store)`; `/admin`, `/admin/needs-review`, `/admin/bills/{id}`, `/style.css` (`theme.css` tokens). Exits as cli.
 
 ## Storage
-SQLite (sqlx, WAL); Litestream replicates to DigitalOcean Spaces from one Droplet (#22).
+SQLite (sqlx, WAL); Litestream to DigitalOcean Spaces (#22, paused).
 
 ## Risks / debt
 - Pre-#38 non-ISO rows are `Corrupt`; a bad PDF xref reads empty.
