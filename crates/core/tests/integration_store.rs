@@ -359,3 +359,24 @@ async fn ac6_non_iso_stored_currency_is_corrupt() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn ac2_sqlite_list_page_pages_newest_first() -> Result<()> {
+    let db = TmpDbFile::new("pg-ac2");
+    let store = SqliteStore::open(&db.path).await?;
+    common::ac2_list_page_pages_newest_first(&store).await
+}
+
+#[tokio::test]
+async fn ac3_sqlite_list_page_filters_by_status() -> Result<()> {
+    let db = TmpDbFile::new("pg-ac3");
+    let store = SqliteStore::open(&db.path).await?;
+    common::ac3_list_page_filters_by_status(&store).await
+}
+
+#[tokio::test]
+async fn ac4_sqlite_list_page_unknown_before_is_not_found() -> Result<()> {
+    let db = TmpDbFile::new("pg-ac4");
+    let store = SqliteStore::open(&db.path).await?;
+    common::ac4_list_page_unknown_before_is_not_found(&store).await
+}

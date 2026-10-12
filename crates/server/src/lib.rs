@@ -3,23 +3,24 @@
 //! `GET /v1/bills/{id}` reads a stored [`hauz_core::bill::Bill`] back as JSON. No
 //! `Content-Type` enforcement, no logging: those are deliberately out of scope here.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::Request;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hauz_core::bill::BillId;
+use hauz_core::bill::{Bill, BillId, Status};
 use hauz_core::extract::Extractor;
 use hauz_core::ingest::{Error as IngestError, Outcome, ingest};
 use hauz_core::mail::{self, Fetched, MailSource};
-use hauz_core::store::BillStore;
+use hauz_core::store::{BillStore, Error as StoreError, ListQuery, PageSize};
 use serde::Serialize;
 use time::OffsetDateTime;
 use tokio::time::MissedTickBehavior;
@@ -154,6 +155,60 @@ async fn get_bill(State(state): State<AppState>, Path(id): Path<String>) -> Resp
     }
 }
 
+/// The JSON body `{"bills": [...], "next": "<id>" | null}` of `GET /v1/bills`.
+#[derive(Serialize)]
+struct BillsBody {
+    bills: Vec<Bill>,
+    next: Option<BillId>,
+}
+
+/// Parses the `status`, `limit` and `before` query params into a [`ListQuery`]; unknown params
+/// are ignored and any invalid value is `None`.
+fn parse_list_query(params: &HashMap<String, String>) -> Option<ListQuery> {
+    let status = match params.get("status").map(String::as_str) {
+        None => None,
+        Some("extracted") => Some(Status::Extracted),
+        Some("needs_review") => Some(Status::NeedsReview),
+        Some(_) => return None,
+    };
+    let limit = match params.get("limit") {
+        None => PageSize::DEFAULT,
+        Some(raw) => PageSize::new(raw.parse().ok()?).ok()?,
+    };
+    let before = match params.get("before") {
+        None => None,
+        Some(raw) => Some(BillId::new(raw).ok()?),
+    };
+    Some(ListQuery {
+        status,
+        limit,
+        before,
+    })
+}
+
+/// `GET /v1/bills`: one page of bills, newest first. An invalid query value or an unknown
+/// `before` cursor answers 400; any other store failure answers 500.
+async fn get_bills(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let invalid = || error_response(StatusCode::BAD_REQUEST, "invalid query");
+    let Some(query) = parse_list_query(&params) else {
+        return invalid();
+    };
+    match state.store.list_page(&query).await {
+        Ok(page) => Json(BillsBody {
+            bills: page.bills,
+            next: page.next,
+        })
+        .into_response(),
+        Err(StoreError::NotFound(_)) => invalid(),
+        // `store::Error` is #[non_exhaustive]; every other variant is an internal failure.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+    }
+}
+
 /// The credential in a single `Authorization: Bearer <token>` header, or `None` for any
 /// other shape (absent, repeated, non-UTF-8, another scheme, no token).
 fn bearer_credential(headers: &axum::http::HeaderMap) -> Option<&str> {
@@ -182,12 +237,14 @@ async fn require_bearer(State(state): State<AppState>, request: Request, next: N
     response
 }
 
-/// Builds the server's router: `POST /v1/ingest/email`, `GET /v1/bills/{id}`, both against
+/// Builds the server's router: `POST /v1/ingest/email`, `GET /v1/bills` and `GET /v1/bills/{id}`,
+/// all against
 /// `state`, each behind bearer-token auth (missing or wrong ⇒ 401), with the body of the
 /// former capped at [`MAX_BODY_BYTES`] (oversized ⇒ 413).
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/ingest/email", post(post_ingest_email))
+        .route("/v1/bills", get(get_bills))
         .route("/v1/bills/{id}", get(get_bill))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
