@@ -24,6 +24,12 @@ request must send `Authorization: Bearer <token>`; a missing or wrong token gets
   or attachment, `500` on a store failure.
 - `GET /v1/bills/{id}`: the bill as JSON, `404` if unknown.
 
+**Background Gmail poll:** when `HAUZ_GMAIL_CLIENT_ID` is set (see the Gmail section; all
+`HAUZ_GMAIL_*` variables apply), the server also polls Gmail. It runs once at startup and then
+every `HAUZ_GMAIL_POLL_SECS` seconds (default 1800). Each tick fetches the label since UTC
+midnight yesterday and logs one summary line to stderr, e.g. `gmail poll: …`. A failed tick is
+logged and retried next tick. Incomplete Gmail config stops startup.
+
 ## LLM configuration (server and CLI)
 Extraction is heuristic by default. Setting `HAUZ_LLM_PROVIDER` adds an LLM pass. It runs
 only for a bill the heuristics leave short of `Extracted`, and its fields are merged in at
@@ -57,7 +63,9 @@ unset HAUZ_LLM_PROVIDER
 
 ## CLI: replay bills against a throwaway database
 `hauz ingest` runs the same pipeline as the server on one `.eml` file and prints one line,
-`Created <id>` or `Duplicate <id>`. It is meant for replaying a folder of real bills while
+`Created <id>` or `Duplicate <id>`. With `--reextract` it extracts again even when the email
+is already stored. It overwrites that row with the new result and prints `Created`, `Updated`
+or `Unchanged <id>` (see *Updating a stored bill*). It is meant for replaying a folder of real bills while
 tuning the extractor, without the server.
 
 ```
@@ -65,7 +73,7 @@ cargo build --release -p hauz-cli          # binary at target/release/hauz
 hauz ingest path/to/bill.eml --db /tmp/replay.db
 ```
 - **`--db`:** defaults to `./hauz.db` in the current directory. The file is created and
-  migrated on first use. Flag and positional may appear in any order after `ingest`.
+  migrated on first use. Flags and positional may appear in any order after `ingest`.
 - **Exit codes:** 0 on success; 1 on a runtime error (unreadable file, unparseable mail,
   store error, bad LLM config), with the message on stderr; 2 on a usage error.
   `hauz --help` prints the usage line.
@@ -100,11 +108,12 @@ hauz fetch --after 2026-09-01 --before 2026-10-01 --db /tmp/replay.db   # Septem
 
 | Variable | When | Value |
 |---|---|---|
-| `HAUZ_GMAIL_CLIENT_ID` | required for `hauz fetch` | OAuth client id (Desktop app) |
-| `HAUZ_GMAIL_CLIENT_SECRET` | required | that client's secret |
-| `HAUZ_GMAIL_REFRESH_TOKEN` | required | see below; can read the **whole** mailbox |
-| `HAUZ_GMAIL_LABEL` | required | label name as Gmail search writes it, e.g. `bills` |
-| `HAUZ_GMAIL_TOKEN_URL` / `HAUZ_GMAIL_API_BASE` | optional | endpoint overrides (tests) |
+| `HAUZ_GMAIL_CLIENT_ID` | `fetch`, `gmail-auth`, server poll | OAuth client id (Desktop app) |
+| `HAUZ_GMAIL_CLIENT_SECRET` | same | that client's secret |
+| `HAUZ_GMAIL_REFRESH_TOKEN` | `fetch`, server poll | from `hauz gmail-auth`; can read the **whole** mailbox |
+| `HAUZ_GMAIL_LABEL` | `fetch`, server poll | label name as Gmail search writes it, e.g. `bills` |
+| `HAUZ_GMAIL_POLL_SECS` | server poll, optional | integer ≥ 1, default 1800 |
+| `HAUZ_GMAIL_TOKEN_URL` / `HAUZ_GMAIL_API_BASE` / `HAUZ_GMAIL_AUTH_URL` | optional | endpoint overrides (tests) |
 
 **One-time Google Cloud setup:**
 1. In the Google Cloud project, enable the Gmail API.
@@ -114,26 +123,73 @@ hauz fetch --after 2026-09-01 --before 2026-10-01 --db /tmp/replay.db   # Septem
 4. In Gmail, create the label (e.g. `bills`) and a filter that applies it to bill senders.
    Label older bills by hand to backfill them.
 
-**Getting a refresh token** (until `hauz gmail-auth`, #57, exists):
-1. Open this URL in a browser, with your client id filled in:
-   ```
-   https://accounts.google.com/o/oauth2/v2/auth?client_id=<CLIENT_ID>&redirect_uri=http://127.0.0.1:8085&response_type=code&scope=https://www.googleapis.com/auth/gmail.readonly&access_type=offline&prompt=consent
-   ```
-2. After you consent, the browser lands on a page that fails to load at `127.0.0.1:8085`.
-   Copy the `code=` value from the address bar. It is URL-encoded, so turn `%2F` back into
-   `/`.
-3. Exchange the code for tokens:
-   ```
-   curl -s https://oauth2.googleapis.com/token -d client_id=<CLIENT_ID> -d client_secret=<CLIENT_SECRET> \
-     -d code=<CODE> -d grant_type=authorization_code -d redirect_uri=http://127.0.0.1:8085
-   ```
-4. Store the response's `refresh_token` as `HAUZ_GMAIL_REFRESH_TOKEN`, in the environment only.
-   Never put it in the repo, a `.env` file or the image. Revoke it at
-   myaccount.google.com/permissions.
+**Getting a refresh token:** `hauz gmail-auth` runs Google's one-time consent:
+```
+export HAUZ_GMAIL_CLIENT_ID=<CLIENT_ID> HAUZ_GMAIL_CLIENT_SECRET=<CLIENT_SECRET>
+export "$(hauz gmail-auth)"        # sets HAUZ_GMAIL_REFRESH_TOKEN in this shell
+```
+1. It prints a consent URL on stderr. Open it in a browser on the same machine and approve
+   read-only Gmail access.
+2. Google redirects the browser to a temporary listener on `127.0.0.1:<random port>`. The tab
+   shows `Consent received. You can close this tab.`
+3. The command prints exactly one line on stdout, `HAUZ_GMAIL_REFRESH_TOKEN=<token>`, and
+   exits 0.
+
+What can go wrong:
+- **Exit 1:** a missing client id or secret (stderr names the variable), declined consent
+  (`access_denied`), a mismatched `state`, or a token-endpoint error.
+- **No refresh token:** if Google answers without one, the command fails instead of printing
+  an empty line. The consent always asks for one (`access_type=offline`, `prompt=consent`).
+- **No timeout:** the command waits for the redirect until you press Ctrl-C.
+
+Keep the token in the environment only: never put it in the repo, a `.env` file or the image.
+Revoke it at myaccount.google.com/permissions.
 
 **First real run:** fetch the same range twice. The second run must print only `Duplicate`,
 which confirms Gmail returns the same raw bytes every time. Use the throwaway database
 recipe from the section above.
+
+## CLI walkthrough: try every command
+Run from the repo root. Steps 1–3 need no network or credentials. They use the committed
+synthetic fixtures and a throwaway database.
+```
+cargo build --release -p hauz-cli -p hauz-tui
+export PATH="$PWD/target/release:$PATH" DB=/tmp/hauz-try.db F=crates/cli/tests/fixtures
+rm -f $DB*; unset HAUZ_LLM_PROVIDER
+```
+1. **ingest**, one row per email:
+   ```
+   hauz ingest $F/bill.eml --db $DB               # Created <id>        exit 0
+   hauz ingest $F/bill.eml --db $DB               # Duplicate <id>      exit 0
+   hauz ingest --reextract $F/bill.eml --db $DB   # Unchanged <id>      exit 0
+   hauz ingest $F/malformed.eml --db $DB          # Error: malformed …  exit 1
+   hauz ingest nope.eml --db $DB                  # Error: reading …    exit 1
+   ```
+2. **Usage errors** (exit 2, usage on stderr):
+   ```
+   hauz --help                                    # usage on stdout, exit 0
+   hauz bogus
+   hauz gmail-auth extra
+   hauz fetch --after 2026-10-02 --before 2026-10-01
+   ```
+3. **Config errors** (exit 1, before anything is opened):
+   ```
+   env -u HAUZ_GMAIL_CLIENT_ID hauz fetch --db $DB                    # Gmail is not configured
+   HAUZ_GMAIL_CLIENT_ID=x env -u HAUZ_GMAIL_CLIENT_SECRET hauz gmail-auth   # names the secret
+   ```
+4. **LLM pass** (optional): with `ollama serve` running, a bill that heuristics leave
+   incomplete gets an LLM pass:
+   `HAUZ_LLM_PROVIDER=ollama HAUZ_LLM_MODEL=gemma4:latest hauz ingest --reextract <file> --db $DB`.
+5. **gmail-auth**, live: it needs the one-time Google Cloud setup above. Then:
+   `export "$(hauz gmail-auth)"`, approve in the browser, and check that
+   `echo ${HAUZ_GMAIL_REFRESH_TOKEN:+set}` prints `set`.
+6. **fetch**, live:
+   ```
+   export HAUZ_GMAIL_LABEL=bills
+   hauz fetch --after 2026-10-01 --db $DB         # Created/Duplicate/Failed per message
+   hauz fetch --after 2026-10-01 --db $DB         # all Duplicate: raw bytes are stable
+   ```
+7. **Browse:** run `hauz-tui --db $DB`. Press `r` to show `needs_review` only and `q` to quit.
 
 ## TUI: browse the stored bills
 `hauz-tui` opens a database **read-only** and lists every bill. It never creates, migrates or
@@ -158,16 +214,20 @@ hauz-tui --db /tmp/replay.db               # --db defaults to ./hauz.db
   to migrate it, or replay into a fresh file.
 
 ## Updating a stored bill
-A stored email cannot be re-extracted yet: `ingest` sees the same hash and returns
-`Duplicate` without extracting, even with the LLM now configured. A re-extract command is
-issue #54. Until then, on a local test database only (never one Litestream replicates),
-delete the row and ingest the email again:
+`ingest` sees an already-stored email's hash and returns `Duplicate` without extracting. That
+holds even after you turn on the LLM or improve an extractor. To re-run extraction on a stored
+email, use `--reextract`:
 ```
-sqlite3 /tmp/replay.db "DELETE FROM bills WHERE id = '<full id>';"   # or: WHERE status = 'needs_review'
-hauz ingest path/to/bill.eml --db /tmp/replay.db
+hauz ingest --reextract path/to/bill.eml --db /tmp/replay.db
 ```
-The full id is printed by `hauz ingest` and shown in the TUI's detail pane. Stop the server
-first if it writes to the same file.
+- **Output:** `Updated <id>` when the result changed. The row now holds exactly the new result
+  (fields and status), including downgrades to `needs_review` and emptied fields; nothing is
+  merged with the old row.
+- **No change:** `Unchanged <id>` when the result is identical, with no write.
+- **New email:** `Created <id>` when it was never stored.
+- **Kept fields:** id, hash, insertion time and list order stay the same.
+
+Stop the server first if it writes to the same file.
 
 ### Keep real bills out of the repo
 Real bills are private. Keep them outside the checkout (the examples above use
