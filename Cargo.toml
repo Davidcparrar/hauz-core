@@ -8,7 +8,7 @@ exclude = ["features"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.95" # rig-core's MSRV (decided 2026-10-03, docs/decisions.md #23)
+rust-version = "1.98" # topcoat's MSRV (decided 2026-10-12, docs/decisions.md #63; was rig-core's 1.95, #23)
 license = "MIT"
 
 # One version per dependency; members use `{ workspace = true }`.
@@ -38,6 +38,8 @@ ratatui = "0.30"
 crossterm = "0.29"
 # Gmail REST client (decided for #42; adds no crate to Cargo.lock)
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form", "query"] }
+# Server-rendered web admin (decided 2026-10-12, docs/decisions.md #63; 0.x, pinned exactly)
+topcoat = { version = "=0.10.0", default-features = false, features = ["router", "serve", "view", "discover"] }
 
 # rustc lints stay `warn`: a `deny` here would break `cargo test` mid red-green.
 # verify.sh runs clippy with `-D warnings`, which promotes everything below.

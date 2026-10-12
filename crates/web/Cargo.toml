@@ -1,0 +1,28 @@
+[package]
+name = "hauz-web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "hauz_web"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hauz-web"
+path = "src/main.rs"
+
+[dependencies]
+hauz-core = { path = "../core" }
+topcoat = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+http-body-util = { workspace = true }
+time = { workspace = true }

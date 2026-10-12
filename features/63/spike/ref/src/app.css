@@ -1,0 +1,2 @@
+body{background:var(--bg);color:var(--fg);font-family:var(--font)}
+a{color:var(--accent)}tr{border-radius:var(--radius)}
