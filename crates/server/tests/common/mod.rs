@@ -24,12 +24,17 @@ fn api_token() -> ApiToken {
 }
 
 /// A unique tmp-file path for a `SqliteStore` under test, so parallel tests never collide.
+/// The name mixes the process id, the time in nanoseconds and a per-process counter, since
+/// time alone repeats across threads scheduled close together.
 pub(crate) fn tmp_db_path() -> std::path::PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or_default();
-    std::env::temp_dir().join(format!("hauz-server-{nanos}.sqlite3"))
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("hauz-server-{pid}-{nanos}-{n}.sqlite3"))
 }
 
 /// A `Router` over a fresh `SqliteStore` and `Chain([TextExtractor, PdfTextExtractor])`, plus
