@@ -6,6 +6,10 @@ stored durably and idempotently (the same email twice ⇒ one bill), and whateve
 extractor cannot read is stored as `needs_review`, never guessed and never dropped.
 Crate map and module interfaces: `docs/architecture.md`.
 
+**Documentation site** (C4 diagrams, sequences, setup, env/CLI/API reference): `docs/site/`,
+an mdBook kept in step with the code by `verify.sh` drift checks. Preview it with
+`cargo install --locked mdbook@0.5.4 mdbook-mermaid@0.17.1 && mdbook serve docs/site`.
+
 ## Build
 Rust ≥ the workspace `rust-version` (see `Cargo.toml`). `cargo build --workspace` builds the
 library (`crates/core`), the HTTP server (`crates/server`), the CLI (`crates/cli`, binary
@@ -150,46 +154,9 @@ which confirms Gmail returns the same raw bytes every time. Use the throwaway da
 recipe from the section above.
 
 ## CLI walkthrough: try every command
-Run from the repo root. Steps 1–3 need no network or credentials. They use the committed
-synthetic fixtures and a throwaway database.
-```
-cargo build --release -p hauz-cli -p hauz-tui
-export PATH="$PWD/target/release:$PATH" DB=/tmp/hauz-try.db F=crates/cli/tests/fixtures
-rm -f $DB*; unset HAUZ_LLM_PROVIDER
-```
-1. **ingest**, one row per email:
-   ```
-   hauz ingest $F/bill.eml --db $DB               # Created <id>        exit 0
-   hauz ingest $F/bill.eml --db $DB               # Duplicate <id>      exit 0
-   hauz ingest --reextract $F/bill.eml --db $DB   # Unchanged <id>      exit 0
-   hauz ingest $F/malformed.eml --db $DB          # Error: malformed …  exit 1
-   hauz ingest nope.eml --db $DB                  # Error: reading …    exit 1
-   ```
-2. **Usage errors** (exit 2, usage on stderr):
-   ```
-   hauz --help                                    # usage on stdout, exit 0
-   hauz bogus
-   hauz gmail-auth extra
-   hauz fetch --after 2026-10-02 --before 2026-10-01
-   ```
-3. **Config errors** (exit 1, before anything is opened):
-   ```
-   env -u HAUZ_GMAIL_CLIENT_ID hauz fetch --db $DB                    # Gmail is not configured
-   HAUZ_GMAIL_CLIENT_ID=x env -u HAUZ_GMAIL_CLIENT_SECRET hauz gmail-auth   # names the secret
-   ```
-4. **LLM pass** (optional): with `ollama serve` running, a bill that heuristics leave
-   incomplete gets an LLM pass:
-   `HAUZ_LLM_PROVIDER=ollama HAUZ_LLM_MODEL=gemma4:latest hauz ingest --reextract <file> --db $DB`.
-5. **gmail-auth**, live: it needs the one-time Google Cloud setup above. Then:
-   `export "$(hauz gmail-auth)"`, approve in the browser, and check that
-   `echo ${HAUZ_GMAIL_REFRESH_TOKEN:+set}` prints `set`.
-6. **fetch**, live:
-   ```
-   export HAUZ_GMAIL_LABEL=bills
-   hauz fetch --after 2026-10-01 --db $DB         # Created/Duplicate/Failed per message
-   hauz fetch --after 2026-10-01 --db $DB         # all Duplicate: raw bytes are stable
-   ```
-7. **Browse:** run `hauz-tui --db $DB`. Press `r` to show `needs_review` only and `q` to quit.
+Moved to the documentation site: *CLI reference & walkthrough*
+(`docs/site/src/reference/cli.md`), where `verify.sh` checks the usage text against the
+binaries.
 
 ## TUI: browse the stored bills
 `hauz-tui` opens a database **read-only** and lists every bill. It never creates, migrates or
