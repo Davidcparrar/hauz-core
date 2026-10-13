@@ -12,11 +12,13 @@ fixes a page silently: findings go to a report, and fixes go through a reviewed 
    the code they describe; boundaries = writes only `docs/site-audit.md`; budget ~40 calls).
    Accept only a ≤300-token return ending `<!-- STATUS: COMPLETE -->`.
 4. **Report.** Read `docs/site-audit.md`. Add the mechanical findings. Commit it.
-5. **Resolve.** Only when the human asked for the audit *and* its fixes (as in a sync issue),
-   fix each finding in the page (or file an issue when the code is wrong rather than the
-   page). Then set `*Verified against: `<sha>`*` on every page with no open finding.
-   Otherwise stop after the report.
-6. **PR.** `bash .claude/scripts/verify.sh`, push, then `gh pr create --title "docs: site
+5. **Stamp.** Set `*Verified against: `<sha>`*` on every page the report marks `OK`. That
+   line is the only page edit this command makes.
+6. **Resolve (only when the human asked for fixes, as in a sync issue such as #70).** Spawn
+   `docs-keeper` in update mode with the report as its input; it alone edits page content.
+   File an issue instead when the code, not the page, is wrong. Re-audit the fixed pages and
+   stamp them. Without that request, stop after step 5.
+7. **PR.** `bash .claude/scripts/verify.sh`, push, then `gh pr create --title "docs: site
    audit <date>"`. The body lists findings per page and what was fixed or carried. **STOP**:
    the human merges.
 

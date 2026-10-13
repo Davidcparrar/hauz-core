@@ -28,6 +28,8 @@ no `.env`. `verify.sh` fails if code reads a variable this table does not list.
 
 **Failure behavior:** a missing required variable or an unknown `HAUZ_LLM_PROVIDER` makes
 the CLI exit 1 and the server refuse to start, in both cases **before** the database is
-opened, and the error names the variable. Secrets are redacted from `Debug` output.
+opened. The error names the variable, except for the server's `DATABASE_URL`, which
+fails with a generic `environment variable not found`. Secrets are redacted from `Debug`
+output.
 
 Keep secrets in the environment only: never in the repo, a `.env` file or an image.

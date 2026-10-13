@@ -168,6 +168,8 @@ selftest() {
 
   # AC7: zero items evaluated is a failure.
   expect_fail ac7-links ac2_links_resolve "$tmp/empty"
+  fresh; sed -i '/<!-- usage:/d' "$tmp/site/src/reference/cli.md"
+  expect_fail ac7-usage ac3_usage_matches "$tmp/site/src" "$usage"
   expect_fail ac7-env ac4_env_documented "$SITE/src" "$tmp/empty"
   expect_fail ac7-routes ac5_routes_documented "$SITE/src" "$tmp/empty"
   expect_fail ac7-pages ac6_pages_stamped "$tmp/empty"
