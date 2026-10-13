@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-The four binaries share one library (`hauz-core`) and one SQLite file. Only the server and
-`hauz` write to the file; `hauz-tui` and `hauz-web` open it read-only.
+The four binaries use one library (`hauz-core`) and one SQLite file. Only the server and
+`hauz` write to the file. `hauz-tui` and `hauz-web` open the file read-only.
 
 ```mermaid
 flowchart TB

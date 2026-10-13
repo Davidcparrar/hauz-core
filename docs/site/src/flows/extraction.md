@@ -2,8 +2,9 @@
 
 *Verified against: `unaudited`*
 
-How an envelope becomes `extracted` or `needs_review`. The heuristic chain always runs. The
-LLM runs only when an LLM provider is configured and the chain's result is incomplete.
+This flow shows how hauz gives an envelope the status `extracted` or `needs_review`. The
+heuristic chain always runs. The LLM runs only if you set an LLM provider and the result of the
+chain is not complete.
 
 ```mermaid
 flowchart TD
@@ -23,8 +24,8 @@ flowchart TD
     F -->|no| R["status: needs_review<br/>(present fields kept, never guessed)"]
 ```
 
-- **Completeness** = an amount at or above the threshold, plus a vendor, plus a period or an
-  issue date.
-- **Confidence** runs from 0 to 100. DIAN XML invoices score 100. The header-derived vendor
-  (the sender's display name, else its domain) scores 20.
-- Notes such as `NoTextLayer` are not persisted.
+- **Complete result:** an amount with a confidence of 50 or more, a vendor, and a period or
+  an issue date.
+- **Confidence:** a value from 0 to 100. A DIAN XML invoice gets 100. A vendor from the email
+  header gets 20. This vendor is the display name of the sender, or else the domain.
+- **Notes:** hauz does not keep notes, for example `NoTextLayer`, in the database.

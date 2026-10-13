@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-`hauz ingest <file.eml>` runs the same pipeline as the webhook against one file.
-`--reextract` skips the hash short-circuit and overwrites a stored row with the new result.
+`hauz ingest <file.eml>` runs the pipeline of the webhook on one file. With `--reextract`,
+hauz does not stop at a stored hash. It replaces the stored row with the new result.
 
 ```mermaid
 sequenceDiagram

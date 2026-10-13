@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-One-time consent that prints a refresh token. The `state` and PKCE verifier come from 64
-bytes of `/dev/urandom`.
+You do this consent one time. It writes a refresh token. The `state` and the PKCE verifier
+come from 64 bytes of `/dev/urandom`.
 
 ```mermaid
 sequenceDiagram

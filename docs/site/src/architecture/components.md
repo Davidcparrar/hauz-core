@@ -2,9 +2,9 @@
 
 *Verified against: `unaudited`*
 
-`hauz-core` (`crates/core`) holds every domain rule. Each box is a public module and lists
-the interface it exposes. Arrows show which module uses which. The binaries call only the
-modules named in the table below.
+`hauz-core` (`crates/core`) contains all domain rules. Each box is a public module. The box
+shows the interface of the module. An arrow goes from a module to a module that it uses. The
+binaries use only the modules in the table below.
 
 ```mermaid
 flowchart LR
@@ -47,14 +47,14 @@ flowchart LR
 
 | Module | Owns | Used directly by |
 |---|---|---|
-| `bill` | the domain vocabulary; a `Bill` exists only through `TryFrom<BillDraft>` | all binaries |
-| `email` | MIME decoding of raw RFC 5322 bytes | `ingest`, `extract` |
-| `extract` | "envelope ⇒ candidate fields with confidence"; composition with `Chain` / `Escalate` | server, `hauz` |
-| `llm` | LLM client edge, PDF rasterizer edge, `LlmExtractor` | server, `hauz` |
-| `zip` | std-only archive reading (DIAN zips) | `extract` |
-| `store` | persistence, idempotency by `RawHash` | all binaries |
-| `ingest` | the pipeline hash → short-circuit → parse → extract → build → insert | server, `hauz`, `mail` |
-| `mail` | Gmail listing and fetch, poll query | server (poller), `hauz fetch` |
-| `consent` | Gmail OAuth consent (PKCE S256, loopback) | `hauz gmail-auth` |
+| `bill` | the domain types. Only `TryFrom<BillDraft>` makes a `Bill` | all binaries |
+| `email` | decodes MIME from raw RFC 5322 bytes | `ingest`, `extract` |
+| `extract` | gets fields with a confidence from an envelope. `Chain` and `Escalate` connect extractors | server, `hauz` |
+| `llm` | the LLM client, the PDF rasterizer and `LlmExtractor` | server, `hauz` |
+| `zip` | reads archives (DIAN zips) with the standard library only | `extract` |
+| `store` | keeps bills. One `RawHash` gives one bill | all binaries |
+| `ingest` | the pipeline: hash, then stop if stored, then parse, extract, build and insert | server, `hauz`, `mail` |
+| `mail` | lists and fetches Gmail messages. Makes the poll query | server (poller), `hauz fetch` |
+| `consent` | gets the Gmail OAuth consent (PKCE S256, loopback) | `hauz gmail-auth` |
 
-Item-level documentation: `cargo doc -p hauz-core --open`.
+For the documentation of each item, run `cargo doc -p hauz-core --open`.

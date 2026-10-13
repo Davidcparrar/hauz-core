@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-`hauz-web` serves server-rendered pages on `127.0.0.1`, without authentication, from a
-database opened read-only at startup.
+`hauz-web` supplies HTML pages on `127.0.0.1` without authentication. When it starts, it
+opens the database read-only.
 
 ```mermaid
 sequenceDiagram

@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-Every matched `/v1` route sits behind one bearer guard that runs before the handler, so an
-unauthenticated client cannot make the server buffer a body.
+One bearer guard protects each `/v1` route. The guard runs before the handler. Thus a
+client without a correct token cannot make the server read a body into memory.
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
     B -->|yes| OK[handler]
 ```
 
-- Missing and wrong tokens get the same response.
-- The server refuses to start without a non-blank `HAUZ_API_TOKEN`.
-- Unmatched paths are not guarded and answer 404.
-- `hauz-web` has **no** auth and binds `127.0.0.1` only.
+- A missing token and a wrong token get the same response.
+- The server does not start if `HAUZ_API_TOKEN` is not set or is blank.
+- The guard does not protect a path that has no route. That path gives 404.
+- `hauz-web` has **no** authentication. It listens on `127.0.0.1` only.

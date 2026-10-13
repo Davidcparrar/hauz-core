@@ -2,9 +2,10 @@
 
 *Verified against: `unaudited`*
 
-Both list one Gmail label and push every message through `ingest`. `hauz fetch` runs once
-over a caller-given UTC day range. The server poller runs at startup and then every
-`HAUZ_GMAIL_POLL_SECS` seconds, over the window since UTC midnight yesterday.
+`hauz fetch` and the poller list one Gmail label and ingest each message. `hauz fetch` runs
+one time, over the UTC days that you give. The poller runs when the server starts. Then it
+runs each `HAUZ_GMAIL_POLL_SECS` seconds. It reads the messages from UTC midnight of the
+previous day.
 
 ```mermaid
 sequenceDiagram
@@ -37,6 +38,6 @@ sequenceDiagram
     Note over T: hauz fetch prints one line per message, exit 1 if any failed<br/>Poller logs one summary line to stderr, a failed tick is retried next tick
 ```
 
-Overlapping runs are safe: an already-stored message is `Duplicate` (see
-[ingest idempotency](../flows/idempotency.md)). Auth, transport or store errors stop the run;
-bills stored before the stop stay stored.
+You can run over the same days again. A stored message gives `Duplicate`
+([ingest idempotency](../flows/idempotency.md)). An authentication, transport or store error
+stops the run. The bills that hauz stored before the error stay in the database.

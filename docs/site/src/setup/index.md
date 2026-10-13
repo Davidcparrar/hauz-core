@@ -3,10 +3,10 @@
 *Verified against: `unaudited`*
 
 ## Prerequisites
-- Rust at least the workspace `rust-version` in `Cargo.toml` (currently 1.98).
-- SQLite needs nothing extra: it is compiled in through `sqlx`.
-- Optional: poppler's `pdftoppm` on `PATH`. The LLM pass uses it to send PDFs as page
-  images (see [LLM providers](llm.md)).
+- Rust, version `rust-version` of `Cargo.toml` or higher (now 1.98).
+- SQLite: no installation is necessary. `sqlx` contains it.
+- Optional: the `pdftoppm` tool of poppler, on `PATH`. The LLM pass uses it to send PDFs as
+  page images (see [LLM providers](llm.md)).
 - Optional: Ollama, or an Anthropic or OpenAI key, for the [LLM pass](llm.md).
 - Optional: a Google Cloud OAuth client, for [Gmail access](gmail.md).
 
@@ -15,24 +15,25 @@
 cargo build --release --workspace
 ls target/release/{hauz-server,hauz,hauz-tui,hauz-web}
 ```
-`.claude/scripts/verify.sh` is the single verification entry point. It runs fmt, clippy
-with `-D warnings`, the tests, doc budgets and these docs' [drift checks](../maintaining.md).
+To verify the repository, run `.claude/scripts/verify.sh`. It runs fmt, clippy with
+`-D warnings`, the tests, the document budgets and the [drift checks](../maintaining.md) of
+this site.
 
 ## The database
-Every binary works on one SQLite file (WAL mode, so you will also see `-wal` and `-shm`
-siblings).
+All binaries use one SQLite file. The file uses WAL mode. Thus you also see a `-wal` file and
+a `-shm` file.
 
 | Binary | How the path is given | Default | Opens |
 |---|---|---|---|
-| `hauz-server` | `DATABASE_URL` (a path, optionally `sqlite://`-prefixed) | required | read-write; creates and migrates |
-| `hauz` | `--db <path>` | `./hauz.db` | read-write; creates and migrates |
-| `hauz-tui` | `--db <path>` | `./hauz.db` | **read-only**; never creates or migrates |
-| `hauz-web` | `--db <path>` | `./hauz.db` | **read-only**; never creates or migrates |
+| `hauz-server` | `DATABASE_URL` (a path. The prefix `sqlite://` is optional) | required | read-write. Creates and migrates |
+| `hauz` | `--db <path>` | `./hauz.db` | read-write. Creates and migrates |
+| `hauz-tui` | `--db <path>` | `./hauz.db` | **read-only**. Does not create or migrate |
+| `hauz-web` | `--db <path>` | `./hauz.db` | **read-only**. Does not create or migrate |
 
-The server should be the only writer while it runs. Stop it before running `hauz ingest`
-or `hauz fetch` against the same file.
+> **CAUTION:** When the server runs, only the server must write to the file. Stop the server
+> before you run `hauz ingest` or `hauz fetch` on the same file.
 
-## Running each binary
+## Run each binary
 ```
 # HTTP server (see the HTTP API reference)
 HAUZ_API_TOKEN=$(openssl rand -hex 32) DATABASE_URL=./hauz.db hauz-server
@@ -46,5 +47,5 @@ hauz-tui --db ./hauz.db
 # local web admin on http://127.0.0.1:3000/admin
 hauz-web --db ./hauz.db --port 3000
 ```
-Every variable each binary reads is listed in the [Environment reference](env.md). The
-binaries' arguments are in the [CLI reference](../reference/cli.md).
+The [Environment reference](env.md) shows all variables of each binary. The
+[CLI reference](../reference/cli.md) shows the arguments of each binary.

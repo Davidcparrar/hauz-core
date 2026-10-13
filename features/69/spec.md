@@ -14,7 +14,7 @@ drift checks in `verify.sh`, a `docs-keeper` agent updating the site inside each
 - Internals: no C4 L4, no private items, no per-function docs (rustdoc covers that).
 - Stamping pages as verified, or running `/docs-audit` (#70).
 - Any change under `crates/**`; replacing `docs/architecture.md`.
-- Link checking of external URLs or anchors.
+- Checking external links or anchors.
 
 ## Assumptions
 - [verified] mdbook 0.5.4 + mdbook-mermaid 0.17.1 (`cargo install --locked`) build mermaid
@@ -31,8 +31,9 @@ drift checks in `verify.sh`, a `docs-keeper` agent updating the site inside each
   with `--selftest` proving each fails on a mutated copy. No Rust change ⇒ no implementer
   step; the reviewer still reviews.
 - Design: CI installs the two pinned tools with `cargo install --locked` (cached bin).
-- Design: README's CLI walkthrough is replaced by a link to the site's CLI reference.
-- no spike: the two verified facts were checked directly by the Leader.
+- Design: README walkthrough → link. Site prose obeys ASD-STE100 (owner, Gate 2);
+  `docs-keeper` carries the rules.
+- no spike: the Leader checked both facts directly.
 
 ## Reference implementation
 Omitted (no spike).
@@ -70,7 +71,7 @@ Omitted (no spike).
   fails on its mutated copy and passes on the real site.
 - AC8 [e2e] WHEN `/feature` reaches step 8, or `/quick` changes a public interface, THE
   SYSTEM SHALL spawn `docs-keeper` (input: spec + `git diff main...HEAD`; writes only
-  `docs/site/**`; returns changed pages or `NO-DOCS-CHANGE: <reason>`) before the PR, and
+  `docs/site/**` in ASD-STE100; returns changed pages or `NO-DOCS-CHANGE: <reason>`) before the PR, and
   `/docs-audit` SHALL write a divergence report to `docs/site-audit.md`, itself editing
   only stamps (content fixes only via `docs-keeper`, on request) (checked by review of the agent and command files).
 

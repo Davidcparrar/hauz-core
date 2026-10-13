@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-Who and what hauz talks to. hauz is one system run by one owner. Blue boxes are hauz, grey
-boxes are external systems, and dashed arrows are planned work.
+This diagram shows the persons and systems that connect to hauz. One owner operates hauz.
+A blue box is hauz. A grey box is an external system. A dashed arrow is a planned connection.
 
 ```mermaid
 flowchart TB
@@ -29,7 +29,7 @@ flowchart TB
 
 | Boundary | Protocol | Direction | Credential |
 |---|---|---|---|
-| Owner ↔ hauz | process args, stdout and exit codes; terminal; HTTP on `127.0.0.1` | in | none (local) |
+| Owner ↔ hauz | process arguments, stdout and exit codes, terminal, HTTP on `127.0.0.1` | in | none (local) |
 | Forwarder → hauz | HTTP `/v1` | in | `HAUZ_API_TOKEN` bearer |
 | hauz → Gmail | HTTPS REST, OAuth 2.0 | out | `HAUZ_GMAIL_*` |
 | hauz → LLM | HTTPS (or local HTTP for Ollama) | out | provider key |

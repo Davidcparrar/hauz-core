@@ -2,8 +2,8 @@
 
 *Verified against: `unaudited`*
 
-`POST /v1/ingest/email` with the raw RFC 5322 bytes as the body. Authentication happens
-before the body is read ([API auth flow](../flows/auth.md)).
+A client sends `POST /v1/ingest/email` with the raw RFC 5322 bytes as the body. The server
+examines the token before it reads the body ([API auth flow](../flows/auth.md)).
 
 ```mermaid
 sequenceDiagram

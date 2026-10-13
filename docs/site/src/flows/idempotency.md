@@ -2,7 +2,7 @@
 
 *Verified against: `unaudited`*
 
-The same raw bytes always map to the same bill. The bill id is the hex SHA-256 of the raw
+The same raw bytes always give the same bill. The bill id is the hex SHA-256 of the raw
 email.
 
 ```mermaid
@@ -21,6 +21,10 @@ flowchart TD
     Q2 -->|yes, equal| N[Unchanged, no write]
 ```
 
-Consequences: replaying a folder, re-running `hauz fetch` over an overlapping range, or a
-forwarder retrying a webhook stores nothing new. Improving an extractor does not touch
-stored rows until you run `--reextract`.
+Thus hauz stores no new bill when:
+- you ingest the same folder again;
+- you run `hauz fetch` again over a range that overlaps a previous range;
+- a forwarder sends the same webhook again.
+
+A change to an extractor does not change the stored bills. To apply the change to a stored
+bill, run `hauz ingest --reextract`.

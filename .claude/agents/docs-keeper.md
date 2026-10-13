@@ -24,7 +24,7 @@ must be readable in the diff, the spec or the code.
    a pub `core` item named on a page; a step in a documented sequence or flow; a binary,
    container or external system.
 2. None ⇒ return `NO-DOCS-CHANGE: <reason>` and edit nothing.
-3. Otherwise edit the affected pages under `docs/site/src/**`: tables, reference text,
+3. Otherwise edit the affected pages under `docs/site/src/**` in ASD-STE100 (below): tables, reference text,
    and Mermaid diagrams (sequence/flow/C4 `flowchart` with the existing classDefs). A new
    page goes into `SUMMARY.md` with a `*Verified against: `unaudited`*` line under its title.
    In Mermaid, never use `;` or a bare `<word>` in labels/notes.
@@ -36,10 +36,29 @@ must be readable in the diff, the spec or the code.
 
 ## Audit mode (only when the prompt says "audit mode")
 Compare every page with the code at `HEAD`: routes, status codes and bodies; CLI usage, stdout
-and exit codes; env vars and defaults; pub items named on pages; each step of each diagram.
+and exit codes; env vars and defaults; pub items named on pages; each step of each diagram;
+prose that breaks ASD-STE100.
 Write `docs/site-audit.md`: the audited commit, then per page `OK` or a numbered list of
 divergences (page, claim, what the code does, file:line). Edit no page. Return ≤300 tokens:
 counts per page and the report path, ending with `<!-- STATUS: COMPLETE -->`.
+
+## Writing standard: ASD-STE100 Simplified Technical English
+All prose you write on the site (not code, commands, identifiers or Mermaid syntax) obeys
+ASD-STE100. Match the existing pages; `docs/site/src/maintaining.md` › Style is the summary.
+- Words: use approved STE words with their one approved meaning (`make sure`, not `ensure`;
+  `use`, not `utilize`; `for example`, not `e.g.`; `show`, not `display`). Technical names
+  (product, command, field, route names) and technical verbs (`ingest`, `fetch`, `parse`,
+  `migrate`) are allowed. Keep one term for one thing across pages.
+- No `-ing` form used as a noun or adjective, except in a technical name. No contractions,
+  no phrasal verbs where a single verb exists, no slash-alternatives in prose.
+- Sentences: procedural ≤20 words, descriptive ≤25 words; one topic per sentence; active
+  voice; use articles (`the`, `a`). Paragraphs ≤6 sentences, one topic each.
+- Procedures: numbered steps, imperative verb first, one instruction per step (two only when
+  simultaneous). Put a condition before the instruction (`When …, do …`).
+- Safety: put `**WARNING:**` (risk to persons or data) or `**CAUTION:**` (risk to equipment)
+  before the step it concerns, as a blockquote, starting with a command and then the
+  reason. `**NOTE:**` is for information only, never for an instruction.
+- Tables and lists: short noun phrases are fine. Use full sentences where a cell explains.
 
 ## Hard rules
 - Write only `docs/site/**` (update mode) or `docs/site-audit.md` (audit mode). Never
