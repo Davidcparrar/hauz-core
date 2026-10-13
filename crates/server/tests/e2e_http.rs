@@ -241,3 +241,23 @@ async fn ac6_malformed_zip_is_bad_request_and_store_stays_empty() -> Result<()> 
     assert_eq!(store.list().await?.len(), 0);
     Ok(())
 }
+
+/// Parallel tests each need their own SQLite file: paths drawn concurrently never repeat
+/// (CI hit `database is locked` when two tests got the same nanosecond).
+#[test]
+fn tmp_db_path_unique_across_concurrent_callers() {
+    let handles: Vec<_> = (0..8)
+        .map(|_| std::thread::spawn(|| (0..500).map(|_| common::tmp_db_path()).collect::<Vec<_>>()))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    for handle in handles {
+        for path in handle.join().unwrap_or_default() {
+            assert!(
+                seen.insert(path.clone()),
+                "duplicate tmp path {}",
+                path.display()
+            );
+        }
+    }
+    assert_eq!(seen.len(), 8 * 500);
+}
