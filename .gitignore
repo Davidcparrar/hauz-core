@@ -10,3 +10,5 @@ corpus/
 *.sqlite3
 *.db-wal
 *.db-shm
+# mdBook output (docs/site); the source is docs/site/src
+docs/site/book/

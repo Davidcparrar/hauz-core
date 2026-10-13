@@ -60,7 +60,8 @@ Omitted (no spike).
   (`ac4_env_documented`).
 - AC5 [e2e] WHEN a route path registered in `crates/server/src` (`.route("…")`) or
   `crates/web/src` (`#[route(METHOD "…")]`) is absent from the API or web reference page
-  THE SYSTEM SHALL fail, naming it (`ac5_routes_documented`).
+  THE SYSTEM SHALL fail, naming it (`ac5_routes_documented`). Topcoat's discovered `#[page]`
+  routes are not greppable and are left to `/docs-audit`.
 - AC6 [e2e] WHEN a page in `docs/site/src` other than `SUMMARY.md` lacks a
   `*Verified against: …*` line THE SYSTEM SHALL fail, naming the page
   (`ac6_pages_stamped`).
