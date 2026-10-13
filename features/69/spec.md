@@ -71,8 +71,8 @@ Omitted (no spike).
 - AC8 [e2e] WHEN `/feature` reaches step 8, or `/quick` changes a public interface, THE
   SYSTEM SHALL spawn `docs-keeper` (input: spec + `git diff main...HEAD`; writes only
   `docs/site/**`; returns changed pages or `NO-DOCS-CHANGE: <reason>`) before the PR, and
-  `/docs-audit` SHALL write a divergence report to `docs/site-audit.md` without editing
-  any page except stamps (checked by review of the agent and command files).
+  `/docs-audit` SHALL write a divergence report to `docs/site-audit.md`, itself editing
+  only stamps (content fixes only via `docs-keeper`, on request) (checked by review of the agent and command files).
 
 <!-- GATE 1 CHECKLIST (Leader self-check, before labelling `approved`):
      [x] every criterion is EARS-shaped, tagged, numbered, and names only pub behavior
