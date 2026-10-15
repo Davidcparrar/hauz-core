@@ -69,6 +69,76 @@ pub enum InsertOutcome {
     Duplicate(BillId),
 }
 
+/// How many bills one [`BillStore::list_page`] call returns at most: 1..=200, default 50.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageSize(u32);
+
+/// A page size outside `1..=200`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("page size {0} is outside 1..=200")]
+pub struct InvalidPageSize(pub u32);
+
+impl PageSize {
+    /// The page size used when the caller names none.
+    pub const DEFAULT: Self = Self(50);
+
+    /// Parse, don't validate: accepts `1..=200`.
+    ///
+    /// # Errors
+    /// Returns [`InvalidPageSize`] for 0 or anything above 200.
+    pub fn new(raw: u32) -> Result<Self, InvalidPageSize> {
+        if (1..=200).contains(&raw) {
+            Ok(Self(raw))
+        } else {
+            Err(InvalidPageSize(raw))
+        }
+    }
+
+    /// The page size as a number.
+    #[must_use]
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// What [`BillStore::list_page`] returns: newest bills first, optionally one status, one page
+/// at a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListQuery {
+    /// Only bills with this status; `None` lists every status.
+    pub status: Option<Status>,
+    /// The most bills to return.
+    pub limit: PageSize,
+    /// Only bills inserted before this one (a cursor from [`BillPage::next`]); `None` starts
+    /// at the newest.
+    pub before: Option<BillId>,
+}
+
+/// One page of bills, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BillPage {
+    /// The bills of this page.
+    pub bills: Vec<Bill>,
+    /// The last returned bill's id when more matching bills exist; pass it as
+    /// [`ListQuery::before`] for the next page.
+    pub next: Option<BillId>,
+}
+
+impl BillPage {
+    /// Builds a page from up to `limit + 1` matching bills, newest first: the extra one only
+    /// proves more exist and is dropped.
+    fn from_overfetched(mut bills: Vec<Bill>, limit: PageSize) -> Self {
+        let limit = limit.get() as usize;
+        let next = if bills.len() > limit {
+            bills.truncate(limit);
+            bills.last().map(|bill| bill.id().clone())
+        } else {
+            None
+        };
+        Self { bills, next }
+    }
+}
+
 /// Moved to the crate root as [`crate::BoxFuture`]; re-exported here so existing paths
 /// (`store::BoxFuture`) keep compiling.
 pub use crate::BoxFuture;
@@ -96,6 +166,10 @@ pub trait BillStore: Send + Sync {
 
     /// Lists every stored bill in insertion order, oldest first.
     fn list<'a>(&'a self) -> BoxFuture<'a, Result<Vec<Bill>, Error>>;
+
+    /// Lists one page of bills, newest first, filtered by `query.status` and starting after
+    /// `query.before`. A `before` that is not stored yields `Error::NotFound(before)`.
+    fn list_page<'a>(&'a self, query: &'a ListQuery) -> BoxFuture<'a, Result<BillPage, Error>>;
 
     /// Overwrites vendor, amount, period, issued, due and status of the row stored under
     /// `bill.id()`; never touches the row's id, hash, insertion time or list position.
@@ -220,11 +294,21 @@ fn encode_columns(
         Some(period) => (Some(period.start()), Some(period.end())),
         None => (None, None),
     };
-    let status = match bill.status() {
+    (
+        currency,
+        amount_minor,
+        period_start,
+        period_end,
+        encode_status(bill.status()),
+    )
+}
+
+/// The `status` column text for `status`; the inverse of [`decode_status`].
+fn encode_status(status: Status) -> &'static str {
+    match status {
         Status::Extracted => "extracted",
         Status::NeedsReview => "needs_review",
-    };
-    (currency, amount_minor, period_start, period_end, status)
+    }
 }
 
 /// How long a pooled connection waits for the SQLite write lock before giving up.
@@ -369,6 +453,34 @@ impl BillStore for SqliteStore {
         })
     }
 
+    fn list_page<'a>(&'a self, query: &'a ListQuery) -> BoxFuture<'a, Result<BillPage, Error>> {
+        Box::pin(async move {
+            let cursor = match &query.before {
+                Some(before) => {
+                    let row = sqlx::query("SELECT rowid FROM bills WHERE id = ?")
+                        .bind(before.as_str())
+                        .fetch_optional(&self.pool)
+                        .await?;
+                    let row = row.ok_or_else(|| Error::NotFound(before.clone()))?;
+                    Some(row.try_get::<i64, _>("rowid")?)
+                }
+                None => None,
+            };
+            let rows = sqlx::query(
+                "SELECT id, vendor, amount_minor, currency, period_start, period_end, issued, due, \
+                 status FROM bills WHERE (?1 IS NULL OR rowid < ?1) \
+                 AND (?2 IS NULL OR status = ?2) ORDER BY rowid DESC LIMIT ?3",
+            )
+            .bind(cursor)
+            .bind(query.status.map(encode_status))
+            .bind(i64::from(query.limit.get()) + 1)
+            .fetch_all(&self.pool)
+            .await?;
+            let bills = rows.iter().map(row_to_bill).collect::<Result<_, _>>()?;
+            Ok(BillPage::from_overfetched(bills, query.limit))
+        })
+    }
+
     fn replace<'a>(&'a self, bill: &'a Bill) -> BoxFuture<'a, Result<(), Error>> {
         Box::pin(async move {
             let (currency, amount_minor, period_start, period_end, status) = encode_columns(bill);
@@ -451,6 +563,29 @@ impl BillStore for InMemoryStore {
         Box::pin(async move {
             let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
             Ok(rows.iter().map(|(_, b)| b.clone()).collect())
+        })
+    }
+
+    fn list_page<'a>(&'a self, query: &'a ListQuery) -> BoxFuture<'a, Result<BillPage, Error>> {
+        Box::pin(async move {
+            let rows = self.rows.lock().unwrap_or_else(PoisonError::into_inner);
+            let end = match &query.before {
+                Some(before) => rows
+                    .iter()
+                    .position(|(_, b)| b.id() == before)
+                    .ok_or_else(|| Error::NotFound(before.clone()))?,
+                None => rows.len(),
+            };
+            let bills = rows
+                .iter()
+                .take(end)
+                .rev()
+                .map(|(_, b)| b)
+                .filter(|b| query.status.is_none_or(|status| b.status() == status))
+                .take(query.limit.get() as usize + 1)
+                .cloned()
+                .collect();
+            Ok(BillPage::from_overfetched(bills, query.limit))
         })
     }
 

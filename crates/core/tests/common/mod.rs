@@ -4,7 +4,7 @@
 #![allow(dead_code)] // not every scenario/fixture fn is used by both test files
 
 use hauz_core::bill::{Bill, BillDraft, BillId, BillingPeriod, Currency, Money, Status, Vendor};
-use hauz_core::store::{BillStore, Error, InsertOutcome, RawHash};
+use hauz_core::store::{BillStore, Error, InsertOutcome, ListQuery, PageSize, RawHash};
 use time::macros::date;
 
 pub(crate) type Result<T> = core::result::Result<T, Box<dyn std::error::Error>>;
@@ -313,6 +313,71 @@ pub(crate) async fn ac2_replace_unknown_id_is_not_found(store: &dyn BillStore) -
     let result = store.replace(&ghost).await;
     assert!(matches!(&result, Err(Error::NotFound(id)) if id == ghost.id()));
     assert_eq!(store.list().await?, vec![stored]);
+    Ok(())
+}
+
+/// A `ListQuery` with `limit` (which must be valid), `status` and `before`.
+fn list_query(status: Option<Status>, limit: u32, before: Option<BillId>) -> Result<ListQuery> {
+    Ok(ListQuery {
+        status,
+        limit: PageSize::new(limit)?,
+        before,
+    })
+}
+
+/// #66 AC2: with three bills stored, limit 2 returns the two newest and `next` = the second's
+/// id; `before = next` returns the oldest and `next = None`.
+pub(crate) async fn ac2_list_page_pages_newest_first(store: &dyn BillStore) -> Result<()> {
+    let oldest = extracted_bill("pg-a")?;
+    let middle = extracted_bill("pg-b")?;
+    let newest = extracted_bill("pg-c")?;
+    store.insert(&hash(60), &oldest).await?;
+    store.insert(&hash(61), &middle).await?;
+    store.insert(&hash(62), &newest).await?;
+
+    let first = store.list_page(&list_query(None, 2, None)?).await?;
+    assert_eq!(first.bills, vec![newest, middle.clone()]);
+    assert_eq!(first.next, Some(middle.id().clone()));
+
+    let second = store.list_page(&list_query(None, 2, first.next)?).await?;
+    assert_eq!(second.bills, vec![oldest]);
+    assert_eq!(second.next, None);
+    Ok(())
+}
+
+/// #66 AC3: a `NeedsReview` filter with limit 1 pages through only `needs_review` bills,
+/// newest first.
+pub(crate) async fn ac3_list_page_filters_by_status(store: &dyn BillStore) -> Result<()> {
+    let review_old = bare_needs_review_bill("fl-a")?;
+    let extracted = extracted_bill("fl-b")?;
+    let review_new = bare_needs_review_bill("fl-c")?;
+    let extracted_new = extracted_bill("fl-d")?;
+    store.insert(&hash(70), &review_old).await?;
+    store.insert(&hash(71), &extracted).await?;
+    store.insert(&hash(72), &review_new).await?;
+    store.insert(&hash(73), &extracted_new).await?;
+
+    let status = Some(Status::NeedsReview);
+    let first = store.list_page(&list_query(status, 1, None)?).await?;
+    assert_eq!(first.bills, vec![review_new.clone()]);
+    assert_eq!(first.next, Some(review_new.id().clone()));
+
+    let second = store.list_page(&list_query(status, 1, first.next)?).await?;
+    assert_eq!(second.bills, vec![review_old]);
+    assert_eq!(second.next, None);
+    Ok(())
+}
+
+/// #66 AC4: a well-formed `before` that is not stored is `NotFound`.
+pub(crate) async fn ac4_list_page_unknown_before_is_not_found(store: &dyn BillStore) -> Result<()> {
+    store
+        .insert(&hash(80), &extracted_bill("nf-stored")?)
+        .await?;
+    let ghost = BillId::new("nf-ghost")?;
+    let result = store
+        .list_page(&list_query(None, 10, Some(ghost.clone()))?)
+        .await;
+    assert!(matches!(&result, Err(Error::NotFound(id)) if *id == ghost));
     Ok(())
 }
 

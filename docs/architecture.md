@@ -47,26 +47,21 @@ Mail arrives by webhook, Gmail fetch or poll.
   `Err` wins, else `merge`), `Escalate` (`Escalate::new(primary, secondary, min_confidence)`:
   `primary` if complete, else merged with `secondary`; either `Err` propagates).
 - `store` — owns persistence: `RawHash`, `InsertOutcome { Inserted, Duplicate }`,
-  `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`, `replace(&Bill)`: overwrites
-  fields + status by id, keeps hash/`inserted_at`/order, absent ⇒ `NotFound`; `dyn`-safe), `SqliteStore` (sqlx, migrations, WAL; `open_read_only` creates/migrates nothing), `InMemoryStore` fake.
-- `llm` — owns the LLM edges (injectable traits) and the extractor over them: `trait LlmClient { fn complete(&self, &LlmRequest) -> BoxFuture<Result<String,
-  Error>> }` over `LlmRequest { instructions, parts: Vec<Part { Text, Png, Pdf }>, schema:
+  `trait BillStore` (`insert`, `get`, `find_by_hash`, `list`, `list_page(&ListQuery { status, limit: PageSize (1..=200, default 50), before: Option<BillId> }) -> BillPage { bills, next }` newest first, unknown `before` ⇒ `NotFound`; `replace(&Bill)`: overwrites
+  fields + status by id, absent ⇒ `NotFound`), `SqliteStore` (sqlx, migrations, WAL; `open_read_only` creates/migrates nothing), `InMemoryStore` fake.
+- `llm` — owns the LLM edges and extractor: `trait LlmClient { complete(&LlmRequest) }` over `LlmRequest { instructions, parts: Vec<Part { Text, Png, Pdf }>, schema:
   schemars::Schema }`, `RigClient::new(Provider, model)` (sole rig-core importer; `Provider { Ollama, Anthropic, OpenAi }`, keys redacted; `Pdf` on Ollama ⇒ `Unsupported`),
-  `trait Rasterizer { fn rasterize(&self, pdf, max_pages) -> Result<Vec<Vec<u8>>> }` with
-  `Pdftoppm::new(dpi)` (shells out),
+  `trait Rasterizer { rasterize(pdf, max_pages) }` with `Pdftoppm::new(dpi)`,
   `Config::from_env(get)` (`HAUZ_LLM_PROVIDER`, `HAUZ_LLM_MODEL`, provider key/URL); `Error { Client, Unsupported, Rasterizer, Config }`.
   `LlmExtractor::new(client, rasterizer, LlmOptions { delivery, max_pages, max_confidence, max_body_chars })` (`Default`: pages, 4, 70, 20k): an `Extractor`; maps JSON through `bill`, caps confidence; `Client` error/bad JSON ⇒ empty + `Note::LlmUnavailable`/`LlmMalformed`; `Unsupported`/`Rasterizer` ⇒ `extract::Error::Llm`.
 - `zip` — owns archive decoding, std only: `read(&[u8]) -> Result<Vec<Entry { name, bytes }>,
-  Error>` inflates methods 0/8, CRC-checked; `MAX_ENTRY_BYTES` (64 MiB); `Error { Malformed { reason }, Unsupported {
-  feature } }` for zip64, encryption, data descriptors, other methods.
-- `ingest` — owns the pipeline: `async fn ingest(raw: &[u8], ex: &dyn Extractor,
-  st: &dyn BillStore) -> Result<Outcome, Error>`, `Outcome { Created(BillId),
+  Error>` inflates methods 0/8, CRC-checked; `MAX_ENTRY_BYTES` (64 MiB); `Error { Malformed, Unsupported }` (zip64, encryption, data descriptors, other methods).
+- `ingest` — owns the pipeline: `ingest(raw, &dyn Extractor, &dyn BillStore) -> Result<Outcome>`, `Outcome { Created(BillId),
   Duplicate(BillId) }`, `raw_hash(&[u8]) -> RawHash` (SHA-256), `EXTRACTED_MIN_CONFIDENCE`
   (50), `Error { Email, Extract, Store, Bill }`. Order: hash →
   `find_by_hash` short-circuit → parse → extract → build `Bill` → insert. Bill id = hash hex. `Status::Extracted` iff `is_complete(EXTRACTED_MIN_CONFIDENCE)`, else
   `NeedsReview` keeping present fields. Parse/extractor `Err` stores nothing; `notes` aren't persisted.
-  `reextract` (same args, no short-circuit) ⇒ `Reextracted { Created, Updated, Unchanged }`
-  (insert / exact `replace` / equal, no write).
+  `reextract` (no short-circuit) ⇒ `Reextracted { Created, Updated, Unchanged }`.
 - `mail` — owns the mail-source edge: `trait MailSource { list(query, page) -> Page { ids,
   next }, fetch_raw(&MessageId) }`, `GmailSource` (REST over `reqwest`,
   refresh token), `Config::from_env(get)` (`HAUZ_GMAIL_*`, redacted), `poll_interval()`, `query(&DateRange)` (UTC days), `poll_query(now)` (since yesterday UTC),
@@ -80,7 +75,7 @@ Mail arrives by webhook, Gmail fetch or poll.
 - server (`crates/server`, lib + `main.rs`): `AppState::new(store, extractor, ApiToken)` (`ApiToken::new`: blank ⇒ `None`,
   `Debug` redacted), `router(state)`, `MAX_BODY_BYTES` (25 MiB ⇒ 413). Every `/v1` route needs
   `Authorization: Bearer <token>` (constant-time), else 401 `"unauthorized"` pre-body. `POST /v1/ingest/email` takes raw RFC 5322 bytes: 201 created / 200 duplicate, body `{"id"}`, 400 on `ingest::Error::{Email,
-  Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: `Bill` JSON or 404. `main.rs`
+  Extract}`, 500 `"internal error"` otherwise. `GET /v1/bills/{id}`: `Bill` JSON or 404. `GET /v1/bills?status&limit&before`: `{bills, next}`, bad value ⇒ 400. `main.rs`
   reads `HAUZ_API_TOKEN` (required), `DATABASE_URL` and `BIND_ADDR` (default
   `127.0.0.1:8080`), runs `Chain([Xml, Text, PdfText])`, in `Escalate` over
   `LlmExtractor(RigClient, Pdftoppm::new(150))` when the LLM env is set, and spawns a `Poller` when Gmail is set

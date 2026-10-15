@@ -9,7 +9,7 @@ use axum::Router;
 use axum::body::{Body, Bytes};
 use axum::http::{Request, StatusCode};
 use hauz_core::bill::{Currency, Money, Status};
-use hauz_core::store::BillStore;
+use hauz_core::store::{BillStore, RawHash};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -239,5 +239,141 @@ async fn ac6_malformed_zip_is_bad_request_and_store_stays_empty() -> Result<()> 
     let (status, _) = post_email(router, DIAN_CORRUPT_EML.to_vec()).await?;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(store.list().await?.len(), 0);
+    Ok(())
+}
+
+/// Sends `GET /v1/bills{query}` with `auth` as the raw `Authorization` value (if any).
+async fn list_bills(
+    router: Router,
+    query: &str,
+    auth: Option<String>,
+) -> Result<(StatusCode, serde_json::Value)> {
+    let mut builder = Request::builder().uri(format!("/v1/bills{query}"));
+    if let Some(value) = auth {
+        builder = builder.header("authorization", value);
+    }
+    let response = router.oneshot(builder.body(Body::empty())?).await?;
+    let status = response.status();
+    let bytes: Bytes = response.into_body().collect().await?.to_bytes();
+    let json = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes)?
+    };
+    Ok((status, json))
+}
+
+fn token_auth() -> Option<String> {
+    Some(format!("Bearer {}", common::TOKEN))
+}
+
+/// Stores `(id, status)` bills in order, oldest first.
+async fn seed(store: &dyn BillStore, bills: &[(&str, Status)]) -> Result<()> {
+    for (index, (id, status)) in bills.iter().enumerate() {
+        store
+            .insert(
+                &RawHash::new([u8::try_from(index)?; 32]),
+                &common::bare_bill(id, *status)?,
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+/// #66 AC6: two stored bills list newest first with `next: null`; `limit=1` returns the newest
+/// with `next` set, and `before=<next>` returns the oldest.
+#[tokio::test]
+async fn ac6_list_bills_newest_first_with_paging() -> Result<()> {
+    let (router, store) = common::app().await?;
+    seed(
+        &*store,
+        &[("old", Status::NeedsReview), ("new", Status::Extracted)],
+    )
+    .await?;
+    let old = serde_json::to_value(common::bare_bill("old", Status::NeedsReview)?)?;
+    let new = serde_json::to_value(common::bare_bill("new", Status::Extracted)?)?;
+
+    let (status, body) = list_bills(router.clone(), "", token_auth()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!({"bills": [new, old], "next": null}));
+
+    let (status, body) = list_bills(router.clone(), "?limit=1", token_auth()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!({"bills": [new], "next": "new"}));
+
+    let (status, body) = list_bills(router, "?limit=1&before=new", token_auth()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, serde_json::json!({"bills": [old], "next": null}));
+    Ok(())
+}
+
+/// #66 AC7: `status=needs_review` lists only `needs_review` bills.
+#[tokio::test]
+async fn ac7_list_bills_filters_by_status() -> Result<()> {
+    let (router, store) = common::app().await?;
+    seed(
+        &*store,
+        &[
+            ("r1", Status::NeedsReview),
+            ("e1", Status::Extracted),
+            ("r2", Status::NeedsReview),
+        ],
+    )
+    .await?;
+
+    let (status, body) = list_bills(router, "?status=needs_review", token_auth()).await?;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<_> = body["bills"]
+        .as_array()
+        .map(|bills| bills.iter().map(|b| b["id"].clone()).collect())
+        .unwrap_or_default();
+    assert_eq!(ids, vec![serde_json::json!("r2"), serde_json::json!("r1")]);
+    assert_eq!(body["next"], serde_json::Value::Null);
+    Ok(())
+}
+
+/// #66 AC8: every invalid query value answers 400 `{"error":"invalid query"}`.
+#[tokio::test]
+async fn ac8_list_bills_invalid_query_is_bad_request() -> Result<()> {
+    let (router, store) = common::app().await?;
+    seed(&*store, &[("only", Status::Extracted)]).await?;
+
+    for query in [
+        "?status=bogus",
+        "?limit=0",
+        "?limit=201",
+        "?limit=abc",
+        "?before=nothex",
+        "?before=unknown-but-well-formed",
+    ] {
+        let (status, body) = list_bills(router.clone(), query, token_auth()).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "invalid query"}),
+            "{query}"
+        );
+    }
+    Ok(())
+}
+
+/// #66 AC9: no or a wrong bearer token answers 401.
+#[tokio::test]
+async fn ac9_list_bills_requires_bearer() -> Result<()> {
+    let (router, _store) = common::app().await?;
+    let (status, _) = list_bills(router.clone(), "", None).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = list_bills(router, "", Some("Bearer wrong".to_owned())).await?;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    Ok(())
+}
+
+/// #66 AC10: a failing store answers 500 `{"error":"internal error"}`.
+#[tokio::test]
+async fn ac10_list_bills_store_failure_is_internal_error() -> Result<()> {
+    let router = common::app_with_store(Arc::new(common::FailingStore));
+    let (status, body) = list_bills(router, "", token_auth()).await?;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body, serde_json::json!({"error": "internal error"}));
     Ok(())
 }
