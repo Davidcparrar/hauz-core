@@ -32,7 +32,11 @@ incomplete step. Never redo completed work; never skip a gate that is not record
    spec, re-walk the Gate-1 checklist, targeted re-implementation, and list the amendment
    in the PR body. The spec changes first; code never silently diverges.
 8. **Docs delta.** If the spec says `PROMOTES`, update `docs/architecture.md` and append
-   a `docs/decisions.md` line yourself, on the branch. Rerun `verify.sh` (budgets).
+   a `docs/decisions.md` line yourself, on the branch. Then spawn `docs-keeper`
+   (delegation contract: objective = bring `docs/site` in step with this branch; files =
+   spec + `git diff main...HEAD`; boundaries = `docs/site/**` only; budget ~25 calls). It
+   returns the pages changed or `NO-DOCS-CHANGE: <reason>`; commit its pages on the branch
+   and quote the return in the PR body. Rerun `verify.sh` (budgets, docs drift checks).
 9. **PR.** Commit, `git push -u origin feat/<n>`, then
    `gh pr create --base main --head feat/<n> --title "feat: <title> (#<n>)" --body
    "Closes #<n>\n\nSpec: features/<n>/spec.md\nReview: features/<n>/review.md"`, plus a

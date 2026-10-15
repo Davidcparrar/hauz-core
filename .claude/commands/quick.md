@@ -11,8 +11,12 @@ eligibility guard is what keeps `/quick` from swallowing `/feature`.
 3. **Red:** write one test `fn <slug>_<behavior>()` in the right `tests/<level>_*.rs`
    file (constitution › Test levels); run it focused; it must fail for the right reason.
 4. **Green:** minimal change; focused run passes.
-5. `cargo fmt --all`, then `bash .claude/scripts/verify.sh` — all green.
-6. **PR:** commit, `git push -u origin quick/<slug>`,
+5. **Docs:** if the change touches a public interface (a route, CLI usage/flag/output/exit
+   code, an env var), spawn `docs-keeper` with the criterion and `git diff main...HEAD`
+   (writes `docs/site/**` only). Its pages ship in this PR. The docs site does not count
+   toward the ≲80-line diff.
+6. `cargo fmt --all`, then `bash .claude/scripts/verify.sh` — all green.
+7. **PR:** commit, `git push -u origin quick/<slug>`,
    `gh pr create --base main --head quick/<slug> --title "fix: <slug>" --body "<the EARS
    criterion>\n\nTest: <test fn name>\n\nCloses #<n>"` (omit `Closes` if no issue).
    **STOP.** The human merges.

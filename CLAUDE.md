@@ -11,14 +11,15 @@ Empty issue list or no `docs/architecture.md` content → propose `/project-init
 
 ## Commands
 `/feature <n>` full pipeline, idempotent (derives phase first) · `/quick <x>` trivial
-change you implement yourself · `/project-init` once per project.
+change you implement yourself · `/docs-audit` site-vs-code divergence report ·
+`/project-init` once per project.
 
 ## Pipeline
 ```
 /feature <n>: derive phase → read issue → [spike?] → spec → GATE 1 (Leader self-check)
               → feat/<n>: commit spec + label approved → implementer-rust (TDD) → reviewer
-              → fix loop ≤2 → push + PR "Closes #n" → STOP.   GATE 2 = human merges.
-/quick <x>:   eligibility → quick/<slug> → red test → green → fmt → verify → PR → STOP.
+              → fix loop ≤2 → docs-keeper → push + PR "Closes #n" → STOP.   GATE 2 = human merges.
+/quick <x>:   eligibility → quick/<slug> → red test → green → [docs-keeper] → fmt → verify → PR → STOP.
 ```
 
 ## State is derived, never stored
@@ -51,13 +52,14 @@ one EARS criterion; diff ≲80 lines; PR body carries the criterion + the test f
 
 ## Agents
 `implementer-rust` (sonnet; TDD, or spike mode when told) · `reviewer` (opus; read-only,
-reruns verify). Accept only ≤300-token returns ending `<!-- STATUS: COMPLETE -->`; never
+reruns verify) · `docs-keeper` (sonnet; updates `docs/site/**` from spec + diff before the
+PR, or writes `docs/site-audit.md` in audit mode). Accept only ≤300-token returns ending `<!-- STATUS: COMPLETE -->`; never
 load a transcript. Artifacts on disk are the truth; a missing marker means still pending.
 
 ## Ownership (single writer per artifact)
 spec → you (the human reads it in the PR) · `features/n/spike/` → implementer (spike mode) · `crates/**` →
 implementer (or you, in `/quick`) · `review.md` → you, from the reviewer's return ·
-`docs/` and labels → you.
+`docs/site/**` → docs-keeper (page stamps → `/docs-audit` only) · rest of `docs/` and labels → you.
 
 ## Rejection routing (never default to full re-spec)
 Gate 1 self-check fails — wording/scope: patch the spec · unverified load-bearing

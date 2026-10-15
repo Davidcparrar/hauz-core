@@ -37,5 +37,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The docs site's drift checks build it (docs/decisions.md #69). Versions are pinned
+      # here and on docs/site/src/maintaining.md; rust-cache keeps ~/.cargo/bin.
+      - name: Install mdbook
+        run: cargo install --locked mdbook@0.5.4 mdbook-mermaid@0.17.1
+
       - name: verify.sh
         run: .claude/scripts/verify.sh

@@ -50,4 +50,10 @@ done
 ((checked > 0)) || { echo "FAIL: doc budget checked 0 files" >&2; exit 1; }
 ((fail == 0)) || exit 1
 
+echo "== docs site drift =="
+# The site (docs/site) must build and match the code: usage, env vars, routes, links, stamps.
+# --selftest proves each check still fails on a broken copy (features/69/spec.md).
+.claude/scripts/docs-check.sh
+.claude/scripts/docs-check.sh --selftest
+
 echo "verify: ALL GREEN"
