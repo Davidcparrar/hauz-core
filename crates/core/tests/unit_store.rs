@@ -4,7 +4,7 @@
 mod common;
 
 use common::{Result, TmpDbFile};
-use hauz_core::store::{BillStore, Error, InMemoryStore, SqliteStore};
+use hauz_core::store::{BillStore, Error, InMemoryStore, InvalidPageSize, PageSize, SqliteStore};
 
 #[tokio::test]
 async fn ac1_insert_then_get() -> Result<()> {
@@ -87,4 +87,28 @@ async fn ac3_read_only_insert_is_rejected_and_store_unchanged() -> Result<()> {
     assert!(matches!(result, Err(Error::Backend(_))));
     assert_eq!(writer.list().await?, before);
     Ok(())
+}
+
+#[test]
+fn ac1_page_size_accepts_only_one_to_two_hundred() {
+    assert_eq!(PageSize::new(0), Err(InvalidPageSize(0)));
+    assert_eq!(PageSize::new(201), Err(InvalidPageSize(201)));
+    assert_eq!(PageSize::new(1).map(PageSize::get), Ok(1));
+    assert_eq!(PageSize::new(200).map(PageSize::get), Ok(200));
+    assert_eq!(PageSize::DEFAULT.get(), 50);
+}
+
+#[tokio::test]
+async fn ac2_in_memory_list_page_pages_newest_first() -> Result<()> {
+    common::ac2_list_page_pages_newest_first(&InMemoryStore::new()).await
+}
+
+#[tokio::test]
+async fn ac3_in_memory_list_page_filters_by_status() -> Result<()> {
+    common::ac3_list_page_filters_by_status(&InMemoryStore::new()).await
+}
+
+#[tokio::test]
+async fn ac4_in_memory_list_page_unknown_before_is_not_found() -> Result<()> {
+    common::ac4_list_page_unknown_before_is_not_found(&InMemoryStore::new()).await
 }

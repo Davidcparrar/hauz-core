@@ -5,10 +5,11 @@
 use std::sync::Arc;
 
 use axum::Router;
-use hauz_core::bill::{Bill, BillId};
+use hauz_core::bill::{Bill, BillDraft, BillId, Currency, Money, Status, Vendor};
 use hauz_core::extract::{Chain, Extractor, PdfTextExtractor, TextExtractor, XmlInvoiceExtractor};
 use hauz_core::store::{
-    BillStore, BoxFuture, Error as StoreError, InsertOutcome, RawHash, SqliteStore,
+    BillPage, BillStore, BoxFuture, Error as StoreError, InsertOutcome, ListQuery, RawHash,
+    SqliteStore,
 };
 use hauz_server::{ApiToken, AppState};
 
@@ -106,10 +107,44 @@ impl BillStore for FailingStore {
         Box::pin(async { Err(boom()) })
     }
 
+    fn list_page<'a>(
+        &'a self,
+        _query: &'a ListQuery,
+    ) -> BoxFuture<'a, core::result::Result<BillPage, StoreError>> {
+        Box::pin(async { Err(boom()) })
+    }
+
     fn replace<'a>(
         &'a self,
         _bill: &'a Bill,
     ) -> BoxFuture<'a, core::result::Result<(), StoreError>> {
         Box::pin(async { Err(boom()) })
     }
+}
+
+/// A bill with the given id and status: `Extracted` bills carry the fields that status
+/// requires (vendor, amount, issued), `NeedsReview` bills are bare.
+pub(crate) fn bare_bill(id: &str, status: Status) -> Result<Bill> {
+    let complete = status == Status::Extracted;
+    Ok(Bill::try_from(BillDraft {
+        id: BillId::new(id)?,
+        vendor: if complete {
+            Some(Vendor::new("Acme Power")?)
+        } else {
+            None
+        },
+        amount: if complete {
+            Some(Money::new(1_234, Currency::new("USD")?))
+        } else {
+            None
+        },
+        period: None,
+        issued: if complete {
+            Some(time::macros::date!(2026 - 01 - 05))
+        } else {
+            None
+        },
+        due: None,
+        status,
+    })?)
 }
